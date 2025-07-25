@@ -1,0 +1,92 @@
+import React, { useState, useContext } from 'react';
+import { Link } from 'react-router-dom';
+import { motion } from 'framer-motion';
+import { FaArrowLeft } from 'react-icons/fa';
+import { AuthContext } from '../context/AuthContext';
+import '../styles/auth.css';
+
+const ForgotPasswordPage = () => {
+  const [email, setEmail] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  
+  const { forgotPassword } = useContext(AuthContext);
+  
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setMessage('');
+    setLoading(true);
+    
+    if (!email) {
+      setError('Please enter your email');
+      setLoading(false);
+      return;
+    }
+    
+    const result = await forgotPassword(email);
+    
+    if (result.success) {
+      setMessage('Password reset link has been sent to your email');
+      setEmail('');
+    } else {
+      setError(result.message);
+    }
+    
+    setLoading(false);
+  };
+  
+  return (
+    <div className="auth-container">
+      <motion.div 
+        className="auth-card forgot-password-card"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+      >
+        <div className="auth-header">
+          <Link to="/login" className="back-link">
+            <FaArrowLeft />
+          </Link>
+          <h2>Forgot Password</h2>
+        </div>
+        
+        <p className="auth-subtitle">Enter your email to reset your password</p>
+        
+        {error && <div className="auth-error">{error}</div>}
+        {message && <div className="auth-success">{message}</div>}
+        
+        <form onSubmit={handleSubmit} className="auth-form">
+          <div className="form-group">
+            <label htmlFor="email">Email</label>
+            <input
+              type="email"
+              id="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Enter your email"
+              required
+            />
+          </div>
+          
+          <motion.button 
+            type="submit" 
+            className="auth-button"
+            disabled={loading}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            {loading ? 'Sending...' : 'Send Reset Link'}
+          </motion.button>
+        </form>
+        
+        <div className="auth-redirect">
+          <p>Remember your password? <Link to="/login">Sign In</Link></p>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
+export default ForgotPasswordPage;
