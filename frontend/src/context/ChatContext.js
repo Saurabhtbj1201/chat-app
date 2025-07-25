@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect, useContext } from 'react';
+import React, { createContext, useState, useEffect, useContext, useCallback } from 'react';
 import axios from 'axios';
 import { AuthContext } from './AuthContext';
 import SocketService from '../services/SocketService';
@@ -157,16 +157,16 @@ export const ChatProvider = ({ children }) => {
   // Fix authentication handling
 
   // Update the API config to always use the latest token
-  const getApiConfig = () => ({
+  const getApiConfig = useCallback(() => ({
     headers: {
       'Content-Type': 'application/json',
       'Authorization': token ? `Bearer ${token}` : ''
     },
     timeout: 10000 // 10 second timeout to prevent hanging requests
-  });
+  }), [token]);
 
   // Update the fetchChats function to handle authentication more gracefully
-  const fetchChats = async () => {
+  const fetchChats = useCallback(async () => {
     if (!isAuthenticated) {
       console.warn('Authentication token not available yet - deferring chat fetch');
       return [];
@@ -195,7 +195,7 @@ export const ChatProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isAuthenticated, token, getApiConfig]);
 
   // Create or access one-on-one chat
   const accessChat = async (userId) => {
@@ -373,7 +373,7 @@ export const ChatProvider = ({ children }) => {
       console.log('Token is available, fetching chats automatically');
       fetchChats();
     }
-  }, [token]); // This will trigger when token becomes available after login
+  }, [token, fetchChats]); // Now fetchChats is stable and won't cause re-renders
 
   // Add a function to clear socket errors
   const clearSocketError = () => {

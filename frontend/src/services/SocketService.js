@@ -114,8 +114,11 @@ const disconnect = () => {
   }
 };
 
-export default {
+// Create a named object before exporting
+const SocketService = {
   initSocket,
   getSocket,
   disconnect
 };
+
+export default SocketService;

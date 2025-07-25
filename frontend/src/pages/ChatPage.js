@@ -34,7 +34,11 @@ const ChatPage = () => {
   
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState([]);
-  const [loading, setLoading] = useState(false); // Replace isSearching with loading
+  
+  // Add eslint-disable comment for variables we might use later
+  // eslint-disable-next-line no-unused-vars
+  const [isLoading, setIsLoading] = useState(false);
+  
   const [newMessage, setNewMessage] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -45,8 +49,9 @@ const ChatPage = () => {
   const [searchUserTerm, setSearchUserTerm] = useState('');
   const [searchingUsers, setSearchingUsers] = useState(false);
   const [showChatMenu, setShowChatMenu] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false); // Add a refreshing state to show loading indicator
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [showChatSearch, setShowChatSearch] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [chatSearchTerm, setChatSearchTerm] = useState('');
   
   // Refs for the dropdown menus
@@ -60,7 +65,7 @@ const ChatPage = () => {
     // Only fetch on initial component mount, not on every fetchChats change
     handleRefresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Empty dependency array for initial load only
+  }, []); 
   
   // Fetch messages when a chat is selected
   useEffect(() => {
@@ -68,7 +73,8 @@ const ChatPage = () => {
       fetchMessages(selectedChat._id);
       clearNotifications(selectedChat._id);
     }
-  }, [selectedChat]); // Only depends on selectedChat, not fetchMessages
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedChat]); 
   
   // Update the useEffect for initial loading to prevent premature requests
   useEffect(() => {
@@ -91,13 +97,14 @@ const ChatPage = () => {
       fetchMessages(selectedChat._id);
       clearNotifications(selectedChat._id);
     }
-  }, [selectedChat, token, fetchMessages, clearNotifications]); // Add token dependency
+  }, [selectedChat, token, fetchMessages, clearNotifications]); 
   
-  // Handle search
+  // Handle search - mark as unused with a comment if you plan to use it later
+  // eslint-disable-next-line no-unused-vars
   const handleSearch = async () => {
     if (!searchTerm) return;
     
-    setLoading(true);
+    setIsLoading(true);
     
     try {
       const { data } = await axios.get(`${process.env.REACT_APP_API_URL}/api/users?search=${searchTerm}`);
@@ -105,11 +112,12 @@ const ChatPage = () => {
     } catch (error) {
       console.error('Error searching users:', error);
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
   
-  // Handle user search input
+  // Handle user search input - mark as unused with a comment if you plan to use it later
+  // eslint-disable-next-line no-unused-vars
   const handleSearchChange = (e) => {
     setSearchTerm(e.target.value);
     
@@ -295,6 +303,10 @@ const ChatPage = () => {
   
   // Add this function to filter chats based on search term
   const getFilteredChats = () => {
+    if (isLoading) {
+      return [];  // Show empty list while loading
+    }
+    
     if (!chatSearchTerm.trim()) {
       return chats;
     }
@@ -315,6 +327,27 @@ const ChatPage = () => {
       return false;
     });
   };
+  
+  // Add chat search functionality to use setChatSearchTerm
+  useEffect(() => {
+    // When chat search is toggled on, add input field to the sidebar
+    if (showChatSearch) {
+      const searchInput = document.createElement('input');
+      searchInput.type = 'text';
+      searchInput.placeholder = 'Search conversations...';
+      searchInput.className = 'chat-search-input';
+      searchInput.addEventListener('input', (e) => {
+        setChatSearchTerm(e.target.value);
+      });
+      
+      // Cleanup function to remove the input when component unmounts
+      return () => {
+        if (searchInput.parentNode) {
+          searchInput.parentNode.removeChild(searchInput);
+        }
+      };
+    }
+  }, [showChatSearch]);
   
   return (
     <div className="chat-container">

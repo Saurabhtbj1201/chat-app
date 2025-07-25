@@ -1,7 +1,7 @@
 import React, { useState, useContext } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { FaArrowLeft } from 'react-icons/fa';
+import { FaArrowLeft, FaExclamationTriangle, FaInfo } from 'react-icons/fa';
 import { AuthContext } from '../context/AuthContext';
 import '../styles/auth.css';
 
@@ -10,6 +10,8 @@ const ForgotPasswordPage = () => {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [devResetUrl, setDevResetUrl] = useState('');
+  const [isDevMode, setIsDevMode] = useState(false);
   
   const { forgotPassword } = useContext(AuthContext);
   
@@ -17,6 +19,8 @@ const ForgotPasswordPage = () => {
     e.preventDefault();
     setError('');
     setMessage('');
+    setDevResetUrl('');
+    setIsDevMode(false);
     setLoading(true);
     
     if (!email) {
@@ -25,16 +29,31 @@ const ForgotPasswordPage = () => {
       return;
     }
     
-    const result = await forgotPassword(email);
-    
-    if (result.success) {
-      setMessage('Password reset link has been sent to your email');
-      setEmail('');
-    } else {
-      setError(result.message);
+    try {
+      const result = await forgotPassword(email);
+      
+      if (result.success) {
+        setMessage('Password reset link has been sent to your email');
+        setEmail('');
+      } else if (result.resetUrl) {
+        // This is a development mode response with a direct reset URL
+        setDevResetUrl(result.resetUrl);
+        setIsDevMode(true);
+        
+        if (result.devMode) {
+          setMessage('Development mode: Email service is not fully configured. Use the link below:');
+        } else {
+          setMessage('Email service encountered an error. Use the development link below:');
+        }
+      } else {
+        setError(result.message);
+      }
+    } catch (err) {
+      setError('An unexpected error occurred. Please try again.');
+      console.error('Forgot password error:', err);
+    } finally {
+      setLoading(false);
     }
-    
-    setLoading(false);
   };
   
   return (
@@ -56,6 +75,21 @@ const ForgotPasswordPage = () => {
         
         {error && <div className="auth-error">{error}</div>}
         {message && <div className="auth-success">{message}</div>}
+        
+        {isDevMode && (
+          <div className="dev-reset-container">
+            <div className="dev-reset-notice">
+              <FaExclamationTriangle />
+              <span>Development Mode</span>
+            </div>
+            <p className="dev-reset-info">
+              <FaInfo /> Email sending is skipped in development mode when email is not configured.
+            </p>
+            <a href={devResetUrl} className="dev-reset-link" target="_blank" rel="noopener noreferrer">
+              Click here to reset password
+            </a>
+          </div>
+        )}
         
         <form onSubmit={handleSubmit} className="auth-form">
           <div className="form-group">

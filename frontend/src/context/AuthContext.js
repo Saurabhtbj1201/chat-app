@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect } from 'react';
+import React, { createContext, useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
@@ -10,6 +10,24 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState(null);
   const navigate = useNavigate();
+
+  // Memoize the logout function with useCallback
+  const logout = useCallback(async () => {
+    try {
+      // Call logout API if user is authenticated
+      if (token) {
+        await axios.post(`${process.env.REACT_APP_API_URL}/api/auth/logout`);
+      }
+    } catch (error) {
+      console.error('Logout error:', error);
+    } finally {
+      localStorage.removeItem('token');
+      setToken(null);
+      setUser(null);
+      setAuthError(null);
+      navigate('/login');
+    }
+  }, [token, navigate]);
 
   // Set up axios interceptors for handling auth errors
   useEffect(() => {
@@ -47,7 +65,7 @@ export const AuthProvider = ({ children }) => {
       // Clean up interceptor on unmount
       axios.interceptors.response.eject(interceptor);
     };
-  }, [token]);
+  }, [token, logout]);
 
   // Check if user is logged in
   useEffect(() => {
@@ -149,24 +167,6 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Logout user
-  const logout = async () => {
-    try {
-      // Call logout API if user is authenticated
-      if (token) {
-        await axios.post(`${process.env.REACT_APP_API_URL}/api/auth/logout`);
-      }
-    } catch (error) {
-      console.error('Logout error:', error);
-    } finally {
-      localStorage.removeItem('token');
-      setToken(null);
-      setUser(null);
-      setAuthError(null);
-      navigate('/login');
-    }
-  };
-
   // Clear auth errors
   const clearAuthError = () => {
     setAuthError(null);
@@ -175,9 +175,29 @@ export const AuthProvider = ({ children }) => {
   // Forgot password
   const forgotPassword = async (email) => {
     try {
-      await axios.post(`${process.env.REACT_APP_API_URL}/api/auth/forgot-password`, { email });
+      const res = await axios.post(`${process.env.REACT_APP_API_URL}/api/auth/forgot-password`, { email });
+      
+      // Handle development mode response
+      if (res.data.resetUrl) {
+        return { 
+          success: false, 
+          message: res.data.message,
+          resetUrl: res.data.resetUrl,
+          devMode: res.data.devMode
+        };
+      }
+      
       return { success: true };
     } catch (error) {
+      // Check if this is a development environment response with a reset URL
+      if (error.response?.status === 500 && error.response?.data?.resetUrl) {
+        return { 
+          success: false, 
+          message: error.response.data.message,
+          resetUrl: error.response.data.resetUrl
+        };
+      }
+      
       return { 
         success: false, 
         message: error.response?.data?.message || 'Failed to send reset email' 

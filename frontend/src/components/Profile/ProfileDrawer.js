@@ -1,7 +1,7 @@
 import React, { useContext } from 'react';
 import PropTypes from 'prop-types';
 import { motion } from 'framer-motion';
-import { FaTimes, FaUser, FaEnvelope, FaMobile, FaTrash } from 'react-icons/fa';
+import { FaTimes, FaEnvelope, FaMobile, FaTrash } from 'react-icons/fa';
 import { AuthContext } from '../../context/AuthContext';
 
 const ProfileDrawer = ({ chat, onClose, onDeleteContact }) => {

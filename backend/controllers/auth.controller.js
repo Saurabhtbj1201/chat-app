@@ -152,17 +152,54 @@ exports.forgotPassword = async (req, res) => {
       <h1>You requested a password reset</h1>
       <p>Please click on the following link to reset your password:</p>
       <a href="${resetUrl}" clicktracking="off">${resetUrl}</a>
+      <p>This link will expire in 10 minutes.</p>
+      <p>If you didn't request this, please ignore this email.</p>
     `;
     
-    await sendEmail({
-      to: user.email,
-      subject: 'Password Reset Request',
-      html: message
-    });
-    
-    res.status(200).json({ message: 'Email sent' });
+    try {
+      const emailResult = await sendEmail({
+        to: user.email,
+        subject: 'Password Reset Request',
+        html: message
+      });
+      
+      // Handle development mode
+      if (emailResult.devMode) {
+        return res.status(200).json({ 
+          message: 'Development mode: Reset email not sent. Check server logs for details.',
+          resetUrl,
+          devMode: true
+        });
+      }
+      
+      res.status(200).json({ message: 'Email sent successfully. Please check your inbox.' });
+    } catch (emailError) {
+      // If email fails, undo the token setting
+      user.resetPasswordToken = undefined;
+      user.resetPasswordExpires = undefined;
+      await user.save();
+      
+      console.error('Email error details:', emailError);
+      
+      // For development environment, provide a direct reset link
+      if (process.env.NODE_ENV === 'development') {
+        return res.status(500).json({ 
+          message: 'Failed to send email. Email service not configured properly.',
+          resetUrl,
+          devNote: 'This reset URL is only provided in development mode for testing.'
+        });
+      }
+      
+      return res.status(500).json({ 
+        message: 'Failed to send reset email. Please try again later or contact support.'
+      });
+    }
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('Forgot password error:', error);
+    res.status(500).json({ 
+      message: 'Server error processing your request', 
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined 
+    });
   }
 };
 

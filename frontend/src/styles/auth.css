@@ -419,6 +419,56 @@
   background-color: #d32f2f;
 }
 
+/* Development Reset Link Styles */
+.dev-reset-container {
+  background-color: #fff3cd;
+  border-left: 4px solid #ffc107;
+  padding: 12px;
+  margin-bottom: 20px;
+  border-radius: 4px;
+}
+
+.dev-reset-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: #856404;
+  font-weight: 600;
+}
+
+.dev-reset-notice svg {
+  font-size: 16px;
+}
+
+.dev-reset-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: #666;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.dev-reset-link {
+  display: block;
+  padding: 8px 12px;
+  background-color: #ffc107;
+  color: #212529;
+  text-align: center;
+  border-radius: 4px;
+  text-decoration: none;
+  font-weight: 500;
+  margin-top: 8px;
+  transition: background-color 0.2s;
+}
+
+.dev-reset-link:hover {
+  background-color: #e0a800;
+  text-decoration: none;
+}
+
 /* Responsive */
 @media (max-width: 600px) {
   .auth-card {
