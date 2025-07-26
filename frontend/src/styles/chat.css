@@ -606,8 +606,9 @@
 
   .profile-drawer {
     width: 100%;
+    z-index: 200; /* Ensure it's above everything else */
   }
-
+  
   .message {
     max-width: 85%;
   }
@@ -1236,6 +1237,48 @@
   /* Remove top padding as we don't need space for the fixed button anymore */
   .chat-area {
     padding-top: 0;
+  }
+  
+  /* Profile Drawer Styles */
+.profile-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 350px;
+  height: 100vh;
+  background-color: #fff;
+  z-index: 100;
+  box-shadow: -5px 0 15px rgba(0, 0, 0, 0.1);
+  overflow-y: auto;
+  transition: transform 0.3s ease;
+}
+
+.profile-drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 20px;
+  border-bottom: 1px solid #e0e0e0;
+  background-color: #fff;
+}
+
+.profile-drawer-header h3 {
+  margin: 0;
+  font-size: 18px;
+  color: #333;
+}
+
+.profile-drawer-content {
+  height: calc(100% - 60px);
+  overflow-y: auto;
+}
+}
+
+/* Mobile specific styles for profile drawer */
+@media (max-width: 768px) {
+  .profile-drawer {
+    width: 100%;
+    z-index: 200; /* Ensure it's above everything else */
   }
   
   /* ...existing mobile styles... */
