@@ -16,7 +16,8 @@ const ChatPage = () => {
   const { user, token } = useContext(AuthContext);
   const { 
     chats, 
-    fetchChats, 
+    fetchChats,
+    setChats,
     selectedChat, 
     setSelectedChat,
     messages,
@@ -27,7 +28,11 @@ const ChatPage = () => {
     startTyping,
     stopTyping,
     clearNotifications,
-    setMessages // Add this line to fix the error:
+    setMessages,
+    initialFetchChats,
+    socket,
+    messagesLoading, // Add this to get message loading state
+    clearMessageCache // Add this to use the cache clearing function
   } = useContext(ChatContext);
   
   const navigate = useNavigate();
@@ -60,12 +65,40 @@ const ChatPage = () => {
   const sidebarButtonRef = useRef(null);
   const chatButtonRef = useRef(null);
   
+  // Track previous selected chat to detect changes
+  const prevSelectedChatRef = useRef(null);
+  
+  // Add an abortController ref to cancel in-flight requests when changing chats
+  const abortControllerRef = useRef(null);
+  
+  // Define debugState function
+  const debugState = () => {
+    console.group('ChatPage Debug Info');
+    console.log('User:', user?.firstName, user?.lastName);
+    console.log('Chats count:', chats?.length || 0);
+    console.log('Selected chat:', selectedChat?._id);
+    console.log('Is loading:', isLoading);
+    console.log('Filtered chats count:', getFilteredChats().length);
+    console.groupEnd();
+  };
+  
   // Fetch chats when component mounts
   useEffect(() => {
-    // Only fetch on initial component mount, not on every fetchChats change
-    handleRefresh();
+    console.log("Chat page mounted - performing initial data fetch");
+    if (user && token) {
+      // Set a flag in sessionStorage to track initial load
+      const hasInitiallyLoaded = sessionStorage.getItem('chatsInitiallyLoaded');
+      if (!hasInitiallyLoaded) {
+        console.log('First load - fetching chats');
+        handleRefresh();
+        sessionStorage.setItem('chatsInitiallyLoaded', 'true');
+      } else {
+        console.log('Using existing chat data');
+        initialFetchChats(); // This will only fetch if chats array is empty
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); 
+  }, []); // Empty dependency array - runs only once on mount
   
   // Fetch messages when a chat is selected
   useEffect(() => {
@@ -91,16 +124,100 @@ const ChatPage = () => {
     }
   }, [user, token, fetchChats]); // Depend on user AND token
   
-  // Modify the message fetching effect to wait for token
+  // Modify the message fetching effect to wait for token and handle errors
   useEffect(() => {
-    if (selectedChat && token) {
-      fetchMessages(selectedChat._id);
-      clearNotifications(selectedChat._id);
+    if (!selectedChat || !token) return;
+    
+    // Create a new abort controller for this fetch
+    if (abortControllerRef.current) {
+      console.log('Aborting previous request due to new selection');
+      abortControllerRef.current.abort();
     }
-  }, [selectedChat, token, fetchMessages, clearNotifications]); 
+    abortControllerRef.current = new AbortController();
+    
+    // Check if we're changing chats (not just an update to the same chat)
+    const isChangingChat = prevSelectedChatRef.current?._id !== selectedChat._id;
+    if (selectedChat && selectedChat._id) {
+      // Save a copy of the chat object rather than a reference
+      prevSelectedChatRef.current = { ...selectedChat };
+    }
+    
+    // If changing chats, show loading state immediately
+    if (isChangingChat) {
+      setIsLoading(true);
+      setMessages([]); // Clear messages when changing chats for better UX
+      console.log(`Switching to chat: ${selectedChat._id}`);
+    }
+    
+    // Use a flag to prevent duplicate requests
+    let isMounted = true;
+    
+    const loadMessages = async () => {
+      try {
+        if (isMounted) {
+          console.log(`Loading messages for chat: ${selectedChat._id}`);
+          // Pass the abort controller signal to fetchMessages
+          const data = await fetchMessages(
+            selectedChat._id, 
+            1, 
+            isChangingChat, // Force refresh when changing chats
+            abortControllerRef.current.signal
+          );
+          
+          // Update messages state here, after getting the result
+          if (isMounted && data && data.messages) {
+            // Use functional update to avoid stale closures
+            setMessages(data.messages);
+            console.log(`Loaded ${data.messages.length} messages`);
+          }
+          
+          // Clear notifications in a separate try/catch to prevent affecting the main flow
+          try {
+            if (isMounted) {
+              clearNotifications(selectedChat._id);
+            }
+          } catch (notifError) {
+            console.error('Error clearing notifications:', notifError);
+          }
+        }
+      } catch (error) {
+        // Only log if the request wasn't deliberately canceled
+        if (error.name !== 'CanceledError' && error.code !== 'ERR_CANCELED') {
+          console.error('Error loading messages:', error);
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+    
+    // Add a small delay when changing chats to prevent UI jank
+    // But make sure we use the right timing approach
+    if (isChangingChat) {
+      const timeoutId = setTimeout(loadMessages, 100);
+      return () => {
+        clearTimeout(timeoutId);
+        isMounted = false;
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+        }
+      };
+    } else {
+      // If not changing chats, load immediately without delay
+      loadMessages();
+      return () => {
+        isMounted = false;
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+        }
+      };
+    }
+  }, [selectedChat, token, fetchMessages, clearNotifications, setMessages]);
   
   // Handle search - mark as unused with a comment if you plan to use it later
-  // eslint-disable-next-line no-unused-vars
   const handleSearch = async () => {
     if (!searchTerm) return;
     
@@ -116,202 +233,64 @@ const ChatPage = () => {
     }
   };
   
-  // Handle user search input - mark as unused with a comment if you plan to use it later
-  // eslint-disable-next-line no-unused-vars
+  // Add an input field to use the handleSearchChange function or add eslint-disable
   const handleSearchChange = (e) => {
     setSearchTerm(e.target.value);
     
     if (e.target.value === '') {
       setSearchResults([]);
     }
-  };
-  
-  // Start a chat with a user
+    // Add this to trigger search on input change when the value is not empty
+    else if (e.target.value.length > 2) {
+      handleSearch();
+    }
+  }; 
+
+  // Add a console log to debug the chats state
+  useEffect(() => {
+    console.log("Current chats in state:", chats);
+  }, [chats]);
+
+  // Fix the access chat function to prevent overwriting chats
   const accessChat = async (userId) => {
     try {
+      setIsLoading(true);
       const { data } = await axios.post(`${process.env.REACT_APP_API_URL}/api/chats`, { userId });
       
+      // Make sure we don't lose existing chats when adding a new one
       if (!chats.find((c) => c._id === data._id)) {
-        fetchChats();
+        setChats(prevChats => [data, ...prevChats]);
       }
       
       setSelectedChat(data);
       setSearchResults([]);
       setSearchTerm('');
+      setIsLoading(false);
     } catch (error) {
       console.error('Error accessing chat:', error);
+      setIsLoading(false);
     }
   };
   
-  // Update handleRefresh to check both user and token
-  const handleRefresh = async () => {
-    if (!user || !token) {
-      console.warn('Cannot refresh: User or authentication token not available');
-      return;
-    }
-    
-    setIsRefreshing(true);
-    try {
-      await fetchChats();
-      if (selectedChat) {
-        await fetchMessages(selectedChat._id);
-      }
-    } catch (error) {
-      console.error('Error refreshing data:', error);
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-  
-  // Improve handleSendMessage to check authentication first
-  const handleSendMessage = async () => {
-    if (newMessage.trim() === '') return;
-    
-    // Check authentication before sending
-    if (!user || !token) {
-      console.error('Cannot send message: Not authenticated');
-      return;
-    }
-    
-    sendMessage(selectedChat._id, newMessage);
-    setNewMessage('');
-    stopTyping(selectedChat._id);
-  };
-  
-  // Handle message typing
-  const handleTyping = () => {
-    startTyping(selectedChat._id);
-    
-    // Clear existing timeout
-    if (typingTimeout) clearTimeout(typingTimeout);
-    
-    // Set new timeout
-    const timeout = setTimeout(() => {
-      stopTyping(selectedChat._id);
-    }, 3000);
-    
-    setTypingTimeout(timeout);
-  };
-  
-  // Add emoji to message
-  const handleEmojiClick = (emojiData) => {
-    setNewMessage(prev => prev + emojiData.emoji);
-  };
-  
-  // Get chat name and image
-  const getChatData = (chat) => {
-    if (!chat || !user) return { name: '', image: '' };
-    
-    if (chat.isGroupChat) {
-      return {
-        name: chat.groupName,
-        image: 'default-group.png'
-      };
-    } else {
-      const otherUser = chat.participants.find(p => p._id !== user._id);
-      return {
-        name: `${otherUser.firstName} ${otherUser.lastName}`,
-        image: otherUser.profilePicture
-      };
-    }
-  };
-  
-  // Check if a user is typing in the selected chat
-  const isUserTyping = () => {
-    if (!selectedChat || !typingUsers[selectedChat._id]) return false;
-    
-    const typingInChat = typingUsers[selectedChat._id];
-    return typingInChat.some(userId => userId !== user._id);
-  };
-  
-  // Add a function to fetch all users
-  const fetchAllUsers = async () => {
-    setSearchingUsers(true);
-    try {
-      const { data } = await axios.get(`${process.env.REACT_APP_API_URL}/api/users`);
-      setAllUsers(data);
-    } catch (error) {
-      console.error('Error fetching users:', error);
-    } finally {
-      setSearchingUsers(false);
-    }
-  };
-  
-  // Handle clicks outside the dropdown
+  // Add this debug function to track chat list changes
   useEffect(() => {
-    const handleClickOutside = (event) => {
-      // For sidebar menu
-      if (showHeaderMenu && 
-          sidebarMenuRef.current && 
-          !sidebarMenuRef.current.contains(event.target) &&
-          !sidebarButtonRef.current.contains(event.target)) {
-        setShowHeaderMenu(false);
-      }
-      
-      // For chat header menu
-      if (showChatMenu && 
-          chatMenuRef.current && 
-          !chatMenuRef.current.contains(event.target) &&
-          !chatButtonRef.current.contains(event.target)) {
-        setShowChatMenu(false);
-      }
-    };
-    
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showHeaderMenu, showChatMenu]);
-  
-  // Add this function to handle deleting a contact
-  const handleDeleteContact = async (chatId) => {
-    try {
-      // Call API to delete chat
-      await axios.delete(`${process.env.REACT_APP_API_URL}/api/chats/${chatId}`);
-      
-      // Update local state
-      fetchChats();
-      
-      // If the deleted chat was selected, clear selection
-      if (selectedChat && selectedChat._id === chatId) {
-        setSelectedChat(null);
-      }
-      
-      // Show success message or notification here if desired
-    } catch (error) {
-      console.error('Error deleting contact:', error);
-      // Show error message or notification here if desired
-    }
-  };
-  
-  // Update message rendering to show sending/error states
-  const handleRetryMessage = (message) => {
-    // Remove the failed message
-    setMessages(prev => prev.filter(m => m._id !== message._id));
-    
-    // Try sending again
-    sendMessage(selectedChat._id, message.content);
-  };
-  
-  // Fix the handleViewProfile function and ensure it's properly defined and passed
-  // Make sure handleViewProfile is correctly defined
-  const handleViewProfile = (chat, contactUser) => {
-    console.log("Viewing profile for:", contactUser.firstName, contactUser.lastName);
-    setSelectedChat(chat);
-    setIsProfileOpen(true);
-  };
-  
-  // Add this function to filter chats based on search term
+    console.log(`Chats state updated, now has ${chats?.length || 0} chats`);
+  }, [chats]);
+
+  // Fix the getFilteredChats function to ALWAYS return an array
   const getFilteredChats = () => {
-    if (isLoading) {
-      return [];  // Show empty list while loading
+    // Ensure we always have a valid array even if chats is null or undefined
+    const chatList = Array.isArray(chats) ? chats : [];
+    
+    if (isLoading && chatList.length === 0) {
+      return [];  // Only show empty list while loading if we don't have chats
     }
     
-    if (!chatSearchTerm.trim()) {
-      return chats;
+    if (!chatSearchTerm || !chatSearchTerm.trim()) {
+      return chatList;
     }
     
-    return chats.filter(chat => {
+    return chatList.filter(chat => {
       // For group chats, search in group name
       if (chat.isGroupChat) {
         return chat.groupName.toLowerCase().includes(chatSearchTerm.toLowerCase());
@@ -347,7 +326,221 @@ const ChatPage = () => {
         }
       };
     }
-  }, [showChatSearch]);
+  }, [showChatSearch, setChatSearchTerm]); // Add setChatSearchTerm dependency
+  
+  // Fix debugState dependency issue
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      debugState();
+    }
+    // We intentionally want this to run only when these specific values change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chats, selectedChat, isLoading]);
+  
+  // Define getSocketStatus function
+  const getSocketStatus = () => {
+    if (!socket) return "disconnected";
+    return socket.connected ? "connected" : "disconnected";
+  };
+
+  // Define the ConnectionStatus component
+  const ConnectionStatus = () => {
+    const status = getSocketStatus();
+    return (
+      <div className={`socket-status ${status}`}>
+        {status === "connected" ? "Connected" : "Disconnected"}
+      </div>
+    );
+  };
+
+  // Define the debouncedSelectChat function
+  const debouncedSelectChat = (chat) => {
+    // Don't re-select the same chat
+    if (selectedChat?._id === chat._id) return;
+    
+    console.log("Selecting chat:", chat._id);
+    setSelectedChat(chat);
+  };
+
+  // Define fetchAllUsers function
+  const fetchAllUsers = async () => {
+    setSearchingUsers(true);
+    try {
+      const { data } = await axios.get(`${process.env.REACT_APP_API_URL}/api/users`);
+      setAllUsers(data);
+    } catch (error) {
+      console.error('Error fetching users:', error);
+    } finally {
+      setSearchingUsers(false);
+    }
+  };
+
+  // Define handleDeleteContact function
+  const handleDeleteContact = async (chatId) => {
+    try {
+      // Call API to delete chat
+      await axios.delete(`${process.env.REACT_APP_API_URL}/api/chats/${chatId}`);
+      
+      // Update local state
+      fetchChats();
+      
+      // If the deleted chat was selected, clear selection
+      if (selectedChat && selectedChat._id === chatId) {
+        setSelectedChat(null);
+      }
+      
+      // Show success message or notification here if desired
+    } catch (error) {
+      console.error('Error deleting contact:', error);
+      // Show error message or notification here if desired
+    }
+  };
+
+  // Define handleViewProfile function
+  const handleViewProfile = (chat, contactUser) => {
+    console.log("Viewing profile for:", contactUser.firstName, contactUser.lastName);
+    setSelectedChat(chat);
+    setIsProfileOpen(true);
+  };
+
+  // Define getChatData function
+  const getChatData = (chat) => {
+    if (!chat || !user) return { name: '', image: '' };
+    
+    if (chat.isGroupChat) {
+      return {
+        name: chat.groupName,
+        image: 'default-group.png'
+      };
+    } else {
+      const otherUser = chat.participants.find(p => p._id !== user._id);
+      return {
+        name: otherUser ? `${otherUser.firstName} ${otherUser.lastName}` : 'Unknown User',
+        image: otherUser?.profilePicture || 'default-avatar.png'
+      };
+    }
+  };
+
+  // Define isUserTyping function
+  const isUserTyping = () => {
+    if (!selectedChat || !typingUsers[selectedChat._id]) return false;
+    
+    const typingInChat = typingUsers[selectedChat._id];
+    return typingInChat.some(userId => userId !== user._id);
+  };
+
+  // Define handleTyping function
+  const handleTyping = () => {
+    if (!selectedChat) return;
+    
+    startTyping(selectedChat._id);
+    
+    // Clear existing timeout
+    if (typingTimeout) clearTimeout(typingTimeout);
+    
+    // Set new timeout
+    const timeout = setTimeout(() => {
+      stopTyping(selectedChat._id);
+    }, 3000);
+    
+    setTypingTimeout(timeout);
+  };
+
+  // Define handleSendMessage function
+  const handleSendMessage = async () => {
+    if (newMessage.trim() === '') return;
+    
+    // Check authentication before sending
+    if (!user || !token) {
+      console.error('Cannot send message: Not authenticated');
+      return;
+    }
+    
+    try {
+      // Clear input field immediately for better UX
+      const messageToSend = newMessage;
+      setNewMessage('');
+      
+      // Add connection check and notification
+      const result = await sendMessage(selectedChat._id, messageToSend);
+      
+      if (!result.success) {
+        console.error('Failed to send message:', result.error);
+        // You could display a toast notification here for errors
+      }
+      
+      stopTyping(selectedChat._id);
+    } catch (error) {
+      console.error('Error in handleSendMessage:', error);
+    }
+  };
+
+  // Define handleEmojiClick function
+  const handleEmojiClick = (emojiData) => {
+    setNewMessage(prev => prev + emojiData.emoji);
+  };
+
+  // Define handleRefresh function
+  const handleRefresh = async () => {
+    if (!user || !token) {
+      console.warn('Cannot refresh: User or authentication token not available');
+      return;
+    }
+    
+    if (isRefreshing) {
+      console.warn('Already refreshing, please wait');
+      return;
+    }
+    
+    setIsRefreshing(true);
+    
+    // Cancel any in-progress requests
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = new AbortController();
+    } else {
+      abortControllerRef.current = new AbortController();
+    }
+    
+    try {
+      console.log("Manually refreshing chats...");
+      
+      // First fetch chats to avoid race conditions
+      await fetchChats();
+      
+      // Then fetch messages for the selected chat if any, with force refresh
+      if (selectedChat) {
+        console.log(`Refreshing messages for chat: ${selectedChat._id}`);
+        // Clear cache for this chat
+        clearMessageCache(selectedChat._id);
+        
+        // Fetch with the new abort controller signal
+        const data = await fetchMessages(
+          selectedChat._id, 
+          1, 
+          true, 
+          abortControllerRef.current.signal
+        );
+        
+        // Update messages in the UI
+        if (data && data.messages) {
+          setMessages(data.messages);
+        }
+      }
+      
+      console.log("Refresh completed successfully");
+    } catch (error) {
+      // Only log if it's not a cancellation
+      if (error.name !== 'CanceledError' && error.code !== 'ERR_CANCELED') {
+        console.error('Error refreshing data:', error);
+      }
+    } finally {
+      // Ensure we always reset the refreshing state
+      setTimeout(() => {
+        setIsRefreshing(false);
+      }, 500); // Small delay for better UX
+    }
+  };
   
   return (
     <div className="chat-container">
@@ -429,9 +622,13 @@ const ChatPage = () => {
                 type="text"
                 placeholder="Search users..."
                 value={searchUserTerm}
-                onChange={(e) => setSearchUserTerm(e.target.value)}
+                onChange={(e) => {
+                  setSearchUserTerm(e.target.value);
+                  // Call handleSearchChange with the same event to handle global search
+                  handleSearchChange(e);
+                }}
               />
-              <button className="search-btn">
+              <button className="search-btn" onClick={handleSearch}>
                 <FaSearch />
               </button>
             </div>
@@ -498,13 +695,15 @@ const ChatPage = () => {
         
         {/* Chat List */}
         <div className="chat-list">
-          {getFilteredChats().length > 0 ? (
+          {chats === null || chats === undefined ? (
+            <div className="no-chats-found">Loading chats...</div>
+          ) : getFilteredChats().length > 0 ? (
             getFilteredChats().map(chat => (
               <ChatItem
                 key={chat._id}
                 chat={chat}
                 isSelected={selectedChat?._id === chat._id}
-                onClick={() => setSelectedChat(chat)}
+                onClick={() => debouncedSelectChat(chat)}
                 isOnline={chat.participants.some(p => 
                   p._id !== user._id && onlineUsers.has(p._id)
                 )}
@@ -523,8 +722,7 @@ const ChatPage = () => {
       {/* Chat Area */}
       <div className="chat-area">
         {selectedChat ? (
-          <>
-            {/* Chat Header */}
+          <>  {/* Chat Header */}
             <div className="chat-header">
               <div className="chat-user-info">
                 <img 
@@ -533,20 +731,13 @@ const ChatPage = () => {
                 />
                 <div>
                   <h3>{selectedChat ? getChatData(selectedChat).name : 'Select a chat'}</h3>
-                  {selectedChat && !selectedChat.isGroupChat && (
-                    <p className={
-                      onlineUsers.has(selectedChat.participants.find(p => p._id !== user?._id)?._id) 
-                      ? "status-online" 
-                      : "status-offline"
-                    }>
-                      {onlineUsers.has(
-                        selectedChat.participants.find(p => p._id !== user?._id)?._id
-                      ) ? 'Online' : 'Offline'}
-                    </p>
-                  )}
-                  {selectedChat && selectedChat.isGroupChat && (
-                    <p>{selectedChat.participants.length} members</p>
-                  )}
+                  <p className={
+                    onlineUsers.has(selectedChat.participants.find(p => p._id !== user?._id)?._id) 
+                    ? "status-online" 
+                    : "status-offline"
+                  }>
+                    {onlineUsers.has(selectedChat.participants.find(p => p._id !== user?._id)?._id) ? 'Online' : 'Offline'}
+                  </p>
                 </div>
               </div>
               <div className="chat-actions">
@@ -575,39 +766,64 @@ const ChatPage = () => {
             
             {/* Chat Messages */}
             <div className="chat-messages">
-              {messages.map(message => (
-                <div 
-                  key={message._id}
-                  className={`message ${message.sender._id === user._id ? 'outgoing' : 'incoming'} ${message.isSending ? 'sending' : ''} ${message.error ? 'error' : ''}`}
-                >
-                  <div className="message-content">
-                    {message.content}
-                    <span className="message-time">
-                      {message.isSending ? 'Sending...' : 
-                       message.error ? 'Failed to send' :
-                       new Date(message.createdAt).toLocaleTimeString([], { 
-                         hour: '2-digit', 
-                         minute: '2-digit' 
-                       })}
-                    </span>
+              {/* Show skeleton loader when changing chats */}
+              {(isLoading || messagesLoading) && messages.length === 0 ? (
+                <>
+                  <div className="loading-messages">
+                    <div className="loading-spinner"></div>
+                    <div className="message-content">
+                      <p>Loading messages...</p>
+                    </div>
                   </div>
-                  {message.sender._id === user._id && !message.isSending && !message.error && (
-                    <div className="read-status">
-                      {message.readBy.some(id => 
-                        id !== user._id && selectedChat.participants.some(p => p._id === id)
-                      ) ? 'Read' : 'Delivered'}
+                  {/* Add skeleton messages for better UX */}
+                  <div className="message-skeleton incoming"></div>
+                  <div className="message-skeleton outgoing"></div>
+                  <div className="message-skeleton incoming"></div>
+                </>
+              ) : messages.length === 0 ? (
+                <div className="no-messages">
+                  <p>No messages yet. Start the conversation!</p>
+                </div>
+              ) : (
+                <>
+                  {/* Show a loading indicator for additional message loads */}
+                  {messagesLoading && messages.length > 0 && (
+                    <div className="messages-loading-more">
+                      <div className="loading-spinner-small"></div>
                     </div>
                   )}
-                  {message.error && (
-                    <button 
-                      className="retry-btn"
-                      onClick={() => handleRetryMessage(message)}
+                  
+                  {/* Render messages */}
+                  {messages.map(message => (
+                    <div 
+                      key={message._id}
+                      className={`message ${message.sender._id === user._id ? 'outgoing' : 'incoming'} ${message.isSending ? 'sending' : ''} ${message.error ? 'error' : ''}`}
                     >
-                      Retry
-                    </button>
-                  )}
-                </div>
-              ))}
+                      <div className="message-content">
+                        <p>{message.content}</p>
+                      </div>
+                      <span className="message-time">
+                        {new Date(message.createdAt).toLocaleTimeString([], { 
+                          hour: '2-digit', 
+                          minute: '2-digit' 
+                        })}
+                      </span>
+                      {message.sender._id === user._id && !message.isSending && !message.error && (
+                        <div className="read-status">
+                          {message.readBy.some(id => 
+                            id !== user._id && selectedChat.participants.some(p => p._id === id)
+                          ) ? 'Read' : 'Delivered'}
+                        </div>
+                      )}
+                      {message.error && (
+                        <div className="error-message">
+                          Failed to send
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </>
+              )}
               
               {isUserTyping() && (
                 <div className="typing-indicator">
@@ -623,8 +839,8 @@ const ChatPage = () => {
                   type="text"
                   placeholder="Type a message..."
                   value={newMessage}
-                  onChange={(e) => {
-                    setNewMessage(e.target.value);
+                  onChange={(e) => { 
+                    setNewMessage(e.target.value); 
                     handleTyping();
                   }}
                   onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
@@ -632,15 +848,20 @@ const ChatPage = () => {
                 <button className="emoji-btn" onClick={() => setShowEmojiPicker(!showEmojiPicker)}>
                   <FaSmile />
                 </button>
-                {showEmojiPicker && (
-                  <div className="emoji-picker-container">
-                    <EmojiPicker onEmojiClick={handleEmojiClick} />
-                  </div>
-                )}
               </div>
               <button className="send-btn" onClick={handleSendMessage}>
                 <FaPaperPlane />
               </button>
+              {showEmojiPicker && (
+                <div className="emoji-picker-container">
+                  <EmojiPicker 
+                    onEmojiClick={handleEmojiClick}
+                    height={300}
+                    width={300}
+                    previewConfig={{ showPreview: false }}
+                  />
+                </div>
+              )}
             </div>
           </>
         ) : (
@@ -660,16 +881,17 @@ const ChatPage = () => {
       
       {/* Profile Drawer */}
       {isProfileOpen && (
-        <ProfileDrawer 
-          chat={selectedChat} 
-          onClose={() => setIsProfileOpen(false)} 
+        <ProfileDrawer
+          chat={selectedChat}
+          onClose={() => setIsProfileOpen(false)}
           onDeleteContact={handleDeleteContact}
         />
       )}
+      
+      {/* Add connection status indicator */}
+      <ConnectionStatus />
     </div>
   );
 };
-
-
 
 export default ChatPage;

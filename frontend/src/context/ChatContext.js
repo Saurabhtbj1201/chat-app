@@ -19,6 +19,165 @@ export const ChatProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   // Add a state to track socket errors
   const [socketError, setSocketError] = useState(null);
+  // Add a message cache to prevent redundant fetching
+  const [messageCache, setMessageCache] = useState({});
+  // Add a loading state specifically for messages
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  // Add debug flag to control excessive logging
+  const [debugMode, setDebugMode] = useState(false);
+
+  // Update the API config to always use the latest token
+  const getApiConfig = useCallback(() => ({
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': token ? `Bearer ${token}` : ''
+    },
+    timeout: 10000 // 10 second timeout to prevent hanging requests
+  }), [token]);
+
+  // IMPORTANT: Define fetchMessages before using it in any other hooks or functions
+  const fetchMessages = useCallback(async (chatId, page = 1, forceRefresh = false, signal = null) => {
+    if (!chatId) {
+      console.error('No chat ID provided');
+      return { messages: [], pagination: { page: 1, pages: 1 } };
+    }
+    
+    if (!isAuthenticated) {
+      console.error('No token provided - cannot fetch messages');
+      return { messages: [], pagination: { page: 1, pages: 1 } };
+    }
+    
+    // Check if messages are already in cache and not forced to refresh
+    const cacheKey = `${chatId}_${page}`;
+    if (!forceRefresh && messageCache[cacheKey] && messageCache[cacheKey].messages.length > 0) {
+      // Only log in debug mode to prevent console spam
+      if (debugMode) {
+        console.log(`Using cached messages for chat: ${chatId}, page: ${page}`);
+      }
+      
+      return messageCache[cacheKey];
+    }
+    
+    // Set loading state
+    setMessagesLoading(true);
+    
+    // Continue with existing fetch logic...
+    const maxRetries = 2;
+    let retries = 0;
+    let lastError = null;
+    
+    const attemptFetch = async () => {
+      try {
+        console.log(`Fetching messages for chat: ${chatId}, page: ${page}`);
+        
+        // Use the provided signal or create a new one with a longer timeout (15 seconds)
+        const controller = signal ? null : new AbortController();
+        const timeoutId = controller ? setTimeout(() => controller.abort(), 15000) : null;
+        
+        const requestSignal = signal || (controller ? controller.signal : null);
+        
+        const { data } = await axios.get(
+          `${process.env.REACT_APP_API_URL}/api/messages/${chatId}?page=${page}&limit=50`,
+          {
+            ...getApiConfig(),
+            signal: requestSignal
+          }
+        );
+        
+        if (timeoutId) clearTimeout(timeoutId);
+        
+        if (!data || !data.messages) {
+          throw new Error('Invalid response format');
+        }
+        
+        console.log(`Retrieved ${data.messages.length} messages`);
+        
+        // Cache the messages - use functional update to avoid stale closures
+        setMessageCache(prev => {
+          // Create a new cache object to ensure reference changes
+          const newCache = { ...prev };
+          newCache[cacheKey] = data;
+          return newCache;
+        });
+        
+        // Mark messages as read if we have a socket connection
+        if (socket && socket.connected) {
+          socket.emit('markMessagesRead', { chatId, userId: user?._id });
+        }
+        
+        setMessagesLoading(false);
+        return data;
+      } catch (error) {
+        // Don't retry if the request was deliberately canceled
+        if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
+          console.log('Request was canceled, not retrying');
+          throw error; // Propagate the cancellation
+        }
+        
+        lastError = error;
+        console.error(`Attempt ${retries + 1} - Error fetching messages:`, error);
+        
+        if (error.name === 'AbortError') {
+          console.error('Request timed out');
+          throw new Error('Request timed out. The server took too long to respond.');
+        }
+        
+        if (error.response?.status === 404) {
+          console.error('Chat not found');
+          throw new Error('Chat not found or no longer exists');
+        }
+        
+        if (error.response?.status === 403) {
+          console.error('Not authorized to view this chat');
+          throw new Error('You are not authorized to view messages in this chat');
+        }
+        
+        if (retries < maxRetries) {
+          retries++;
+          console.log(`Retrying... (${retries}/${maxRetries})`);
+          // Exponential backoff with jitter
+          const delay = (1000 * retries) + (Math.random() * 500);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return attemptFetch();
+        }
+        
+        console.error('Max retries reached. Could not fetch messages.');
+        throw lastError;
+      }
+    };
+    
+    try {
+      return await attemptFetch();
+    } catch (error) {
+      // Only reset loading state if this wasn't a cancellation
+      if (error.name !== 'CanceledError' && error.code !== 'ERR_CANCELED') {
+        setMessagesLoading(false);
+      }
+      // Return empty data on error but don't wipe existing messages
+      return { messages: [], pagination: { page: 1, pages: 1 } };
+    }
+  }, [isAuthenticated, user, getApiConfig, debugMode, socket]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Intentionally omitting messageCache from dependencies to prevent infinite loops
+  // We access messageCache but avoid re-creating this function when it changes
+
+  // Add a function to clear message cache for a specific chat or all chats
+  const clearMessageCache = useCallback((chatId = null) => {
+    if (chatId) {
+      // Clear cache only for specified chat
+      setMessageCache(prev => {
+        const newCache = { ...prev };
+        Object.keys(newCache).forEach(key => {
+          if (key.startsWith(`${chatId}_`)) {
+            delete newCache[key];
+          }
+        });
+        return newCache;
+      });
+    } else {
+      // Clear all cache
+      setMessageCache({});
+    }
+  }, []);
 
   // Initialize socket.io connection
   useEffect(() => {
@@ -68,11 +227,30 @@ export const ChatProvider = ({ children }) => {
     return () => {
       SocketService.disconnect();
     };
-  }, [user, token]); // Add token to dependency array
+  }, [user, token]); // Keep only user and token as dependencies
 
   // Socket event listeners
   useEffect(() => {
     if (!socket) return;
+    
+    // Add socket connection status tracking
+    const handleConnect = () => {
+      console.log('Socket connected in ChatContext');
+      // When reconnected, fetch fresh data
+      if (selectedChat) {
+        // Don't call fetchMessages directly here as it can cause an update loop
+        // Instead, set a flag to indicate a refresh is needed
+        console.log('Socket reconnected, messages will refresh on next user interaction');
+      }
+    };
+    
+    const handleDisconnect = (reason) => {
+      console.log(`Socket disconnected: ${reason}`);
+    };
+    
+    // Add event listeners
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
     
     // Typing indicators
     socket.on('typing', (data) => {
@@ -112,10 +290,10 @@ export const ChatProvider = ({ children }) => {
       
       // If the chat is not selected OR the message is not from the selected chat
       if (!selectedChat || selectedChat._id !== newMessage.chat._id) {
-        // Add notificationk as read
+        // Add notification
         console.log('Adding to notifications');
         setNotifications(prev => {
-          // Avoid duplicates  userId: user._id
+          // Avoid duplicates
           if (prev.some(msg => msg._id === newMessage._id)) return prev;
           return [...prev, newMessage];
         });
@@ -123,7 +301,7 @@ export const ChatProvider = ({ children }) => {
         // Update messages for current chat
         console.log('Updating messages for current chat');
         setMessages(prev => {
-          // Avoid duplicates  socket.off('messagesRead');
+          // Avoid duplicates
           if (prev.some(msg => msg._id === newMessage._id)) return prev;
           return [...prev, newMessage];
         });
@@ -147,23 +325,14 @@ export const ChatProvider = ({ children }) => {
     });
 
     return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
       socket.off('typing');
       socket.off('stopTyping');
       socket.off('messagesRead');
       socket.off('message_received');
     };
-  }, [socket, selectedChat, user]);
-
-  // Fix authentication handling
-
-  // Update the API config to always use the latest token
-  const getApiConfig = useCallback(() => ({
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': token ? `Bearer ${token}` : ''
-    },
-    timeout: 10000 // 10 second timeout to prevent hanging requests
-  }), [token]);
+  }, [socket, selectedChat, user]); // Remove fetchMessages from dependencies
 
   // Update the fetchChats function to handle authentication more gracefully
   const fetchChats = useCallback(async () => {
@@ -200,15 +369,39 @@ export const ChatProvider = ({ children }) => {
   // Create or access one-on-one chat
   const accessChat = async (userId) => {
     try {
-      const { data } = await axios.post(`${process.env.REACT_APP_API_URL}/api/chats`, { userId });
-      // Check if chat already exists in state
-      if (!chats.find(c => c._id === data._id)) {
-        setChats([data, ...chats]);
-      }
+      // Set loading state
+      setLoading(true);
+      
+      // Make API request
+      const { data } = await axios.post(
+        `${process.env.REACT_APP_API_URL}/api/chats`, 
+        { userId },
+        getApiConfig()
+      );
+      
+      // Important fix: Update chats state without losing existing chats
+      setChats(prevChats => {
+        // Check if chat already exists in state
+        const chatExists = prevChats.some(c => c._id === data._id);
+        
+        // If it doesn't exist, add it to the beginning of the array
+        if (!chatExists) {
+          console.log("Adding new chat to list:", data._id);
+          return [data, ...prevChats];
+        }
+        
+        // If it exists, return a NEW array with the existing chats to trigger a re-render
+        return [...prevChats];
+      });
+      
+      // Update selected chat
       setSelectedChat(data);
+      setLoading(false);
+      
       return data;
     } catch (error) {
       console.error('Error accessing chat:', error);
+      setLoading(false);
       return null;
     }
   };
@@ -228,59 +421,8 @@ export const ChatProvider = ({ children }) => {
     }
   };
 
-  // Update fetchMessages to handle authentication gracefully
-  const fetchMessages = async (chatId) => {
-    if (!chatId) {
-      console.error('No chat ID provided');
-      return [];
-    }
-    
-    if (!isAuthenticated) {
-      console.error('No token provided - cannot fetch messages');
-      return [];
-    }
-    
-    const maxRetries = 2;
-    let retries = 0;
-    
-    const attemptFetch = async () => {
-      try {
-        console.log(`Fetching messages for chat: ${chatId}`);
-        const { data } = await axios.get(
-          `${process.env.REACT_APP_API_URL}/api/messages/${chatId}`,
-          getApiConfig() // Use fresh config with latest token
-        );
-        
-        console.log(`Retrieved ${data.length} messages`);
-        setMessages(data);
-
-        // Mark messages as read
-        if (socket && socket.connected) {
-          socket.emit('markMessagesRead', { chatId, userId: user?._id });
-        }
-
-        return data;
-      } catch (error) {
-        console.error(`Attempt ${retries + 1} - Error fetching messages:`, error);
-        
-        if (retries < maxRetries) {
-          retries++;
-          console.log(`Retrying... (${retries}/${maxRetries})`);
-          // Exponential backoff
-          await new Promise(resolve => setTimeout(resolve, 1000 * retries));
-          return attemptFetch();
-        }
-        
-        console.error('Max retries reached. Could not fetch messages.');
-        return [];
-      }
-    };
-    
-    return attemptFetch();
-  };
-
-  // Send a message
-  const sendMessage = async (chatId, content) => {
+  // Fix the sendMessage function
+  const sendMessage = useCallback(async (chatId, content) => {
     if (!isAuthenticated) {
       console.error('User not authenticated');
       return { success: false, error: 'Not authenticated' };
@@ -309,11 +451,28 @@ export const ChatProvider = ({ children }) => {
     try {
       console.log('Sending message to API:', { chatId, content });
 
+      // Add explicit timeout to avoid hanging requests
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+      // Create fresh config with latest token and timeout
+      const config = {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : ''
+        },
+        signal: controller.signal
+      };
+
+      // Make sure we're using the correct API endpoint and method
       const { data } = await axios.post(
         `${process.env.REACT_APP_API_URL}/api/messages`,
         { chatId, content },
-        getApiConfig() // Use fresh config with latest token
+        config
       );
+      
+      // Clear timeout
+      clearTimeout(timeoutId);
 
       console.log('Message saved to DB:', data);
 
@@ -322,12 +481,17 @@ export const ChatProvider = ({ children }) => {
         msg._id === tempId ? data : msg
       ));
 
-      // Emit message to socket for real-time updates
-      if (socket && socket.connected) {
+      // Emit message to socket for real-time updates if socket is connected
+      if (SocketService.isConnected()) {
         console.log('Emitting new_message event');
         socket.emit('new_message', data);
       } else {
-        console.error('Socket not connected. Cannot emit message.');
+        console.warn('Socket not connected, queuing message for later delivery');
+        // Queue the message for when connection is restored
+        SocketService.queueMessage('new_message', data);
+        
+        // Try to reconnect the socket
+        SocketService.reconnect();
       }
 
       // Update last message in chat list
@@ -337,7 +501,14 @@ export const ChatProvider = ({ children }) => {
 
       return { success: true, message: data };
     } catch (error) {
-      console.error('Error sending message:', error.response?.data || error.message);
+      console.error('Error sending message:', error);
+      
+      if (error.name === 'AbortError') {
+        console.error('Request timed out');
+      }
+      
+      console.error('Response data:', error.response?.data);
+      console.error('Status code:', error.response?.status);
       
       // Mark message as failed
       setMessages(prev => prev.map(msg => 
@@ -346,7 +517,7 @@ export const ChatProvider = ({ children }) => {
       
       return { success: false, error, tempId };
     }
-  };
+  }, [isAuthenticated, user, token, socket, setMessages, setChats]);
 
   // Start typing
   const startTyping = (chatId) => {
@@ -367,18 +538,28 @@ export const ChatProvider = ({ children }) => {
     setNotifications(prev => prev.filter(n => n.chat._id !== chatId));
   };
 
-  // Add a new effect to auto-fetch chats when token becomes available
-  useEffect(() => {
-    if (token) {
-      console.log('Token is available, fetching chats automatically');
+  // Add a manual initial fetch function that's called once on mount
+  const initialFetchChats = useCallback(() => {
+    if (isAuthenticated && !chats.length) {
+      console.log('Performing initial chat fetch');
       fetchChats();
     }
-  }, [token, fetchChats]); // Now fetchChats is stable and won't cause re-renders
+  }, [isAuthenticated, fetchChats, chats.length]);
 
   // Add a function to clear socket errors
   const clearSocketError = () => {
     setSocketError(null);
   };
+
+  // Add socket status check and reconnect functionality
+  const checkSocketConnection = useCallback(() => {
+    if (!socket || !socket.connected) {
+      console.log('Socket disconnected, attempting to reconnect...');
+      SocketService.reconnect();
+      return false;
+    }
+    return true;
+  }, [socket]);
 
   return (
     <ChatContext.Provider value={{
@@ -394,17 +575,23 @@ export const ChatProvider = ({ children }) => {
       notifications,
       setNotifications,
       loading,
-      isAuthenticated, // Add this to the context
+      isAuthenticated,
       socketError,
       clearSocketError,
       fetchChats,
+      initialFetchChats,
       accessChat,
       createGroupChat,
       fetchMessages,
       sendMessage,
       startTyping,
       stopTyping,
-      clearNotifications
+      clearNotifications,
+      checkSocketConnection,
+      messagesLoading,
+      clearMessageCache, // Export the new function
+      debugMode,
+      setDebugMode, // Add this to let developers toggle debugging
     }}>
       {children}
     </ChatContext.Provider>

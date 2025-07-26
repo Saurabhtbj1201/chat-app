@@ -120,14 +120,16 @@ exports.logout = async (req, res) => {
   }
 };
 
-// Forgot password
+// Forgot password controller - update to handle email responses better
 exports.forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
     
+    // Find user by email
     const user = await User.findOne({ email });
+    
     if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+      return res.status(404).json({ message: 'User with that email does not exist' });
     }
     
     // Generate reset token
@@ -138,8 +140,8 @@ exports.forgotPassword = async (req, res) => {
       .createHash('sha256')
       .update(resetToken)
       .digest('hex');
-      
-    // Set token expire time (10 minutes)
+    
+    // Set expire time (10 minutes)
     user.resetPasswordExpires = Date.now() + 10 * 60 * 1000;
     
     await user.save();
@@ -147,59 +149,66 @@ exports.forgotPassword = async (req, res) => {
     // Create reset URL
     const resetUrl = `${process.env.CLIENT_URL}/reset-password/${resetToken}`;
     
-    // Send email
+    // Create email message
     const message = `
-      <h1>You requested a password reset</h1>
-      <p>Please click on the following link to reset your password:</p>
-      <a href="${resetUrl}" clicktracking="off">${resetUrl}</a>
-      <p>This link will expire in 10 minutes.</p>
-      <p>If you didn't request this, please ignore this email.</p>
+      <h1>Password Reset Request</h1>
+      <p>You requested a password reset for your Chat App account.</p>
+      <p>Click the link below to reset your password:</p>
+      <a href="${resetUrl}" style="padding: 10px 15px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px;">Reset Password</a>
+      <p>This link is valid for 10 minutes.</p>
+      <p>If you didn't request this reset, please ignore this email and your password will remain unchanged.</p>
     `;
     
+    // Send email
     try {
-      const emailResult = await sendEmail({
+      const result = await sendEmail({
         to: user.email,
-        subject: 'Password Reset Request',
+        subject: 'Chat App - Password Reset',
         html: message
       });
       
-      // Handle development mode
-      if (emailResult.devMode) {
+      // Handle successful email send
+      if (result.success) {
+        // If it's a test account, return the preview URL
+        if (result.testAccount && result.previewUrl) {
+          return res.status(200).json({
+            success: true,
+            message: 'Email service using test account. Check the preview URL.',
+            resetUrl: result.previewUrl,
+            devMode: true
+          });
+        }
+        
         return res.status(200).json({ 
-          message: 'Development mode: Reset email not sent. Check server logs for details.',
-          resetUrl,
-          devMode: true
+          success: true, 
+          message: 'Password reset email sent successfully' 
         });
       }
-      
-      res.status(200).json({ message: 'Email sent successfully. Please check your inbox.' });
     } catch (emailError) {
-      // If email fails, undo the token setting
+      console.error('Email error:', emailError);
+      
+      // Reset tokens in the database so they cannot be used
       user.resetPasswordToken = undefined;
       user.resetPasswordExpires = undefined;
       await user.save();
       
-      console.error('Email error details:', emailError);
-      
-      // For development environment, provide a direct reset link
+      // In development, still provide the reset URL directly
       if (process.env.NODE_ENV === 'development') {
-        return res.status(500).json({ 
-          message: 'Failed to send email. Email service not configured properly.',
+        return res.status(200).json({
+          success: false,
+          message: 'Failed to send email, but development mode is active. Use the direct link below.',
           resetUrl,
-          devNote: 'This reset URL is only provided in development mode for testing.'
+          error: emailError.message
         });
       }
       
-      return res.status(500).json({ 
-        message: 'Failed to send reset email. Please try again later or contact support.'
+      return res.status(500).json({
+        message: 'Error sending password reset email. Please try again or contact support.'
       });
     }
   } catch (error) {
     console.error('Forgot password error:', error);
-    res.status(500).json({ 
-      message: 'Server error processing your request', 
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined 
-    });
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 

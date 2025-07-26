@@ -83,3 +83,53 @@ app.use((err, req, res, next) => {
     error: process.env.NODE_ENV === 'development' ? err.message : undefined 
   });
 });
+
+// Add more robust error handling for API requests
+app.use((err, req, res, next) => {
+  console.error('Server error:', err);
+  
+  // Handle specific error types
+  if (err.name === 'ValidationError') {
+    return res.status(400).json({ 
+      message: 'Validation error', 
+      details: err.message,
+      code: 'VALIDATION_ERROR' 
+    });
+  }
+  
+  if (err.name === 'CastError') {
+    return res.status(400).json({ 
+      message: 'Invalid ID format', 
+      details: err.message,
+      code: 'INVALID_ID' 
+    });
+  }
+  
+  // Handle ECONNRESET errors which can happen with slow connections
+  if (err.code === 'ECONNRESET') {
+    return res.status(408).json({
+      message: 'Connection reset by client',
+      code: 'CONNECTION_RESET'
+    });
+  }
+  
+  // Handle timeout errors
+  if (err.name === 'TimeoutError' || err.message.includes('timeout')) {
+    return res.status(408).json({
+      message: 'Request timeout',
+      code: 'REQUEST_TIMEOUT'
+    });
+  }
+  
+  // Default error response
+  res.status(500).json({ 
+    message: 'Something went wrong!',
+    code: 'SERVER_ERROR',
+    error: process.env.NODE_ENV === 'development' ? err.message : undefined 
+  });
+});
+
+// Add a simple route to check server status
+app.get('/api/status', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date() });
+});

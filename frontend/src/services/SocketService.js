@@ -4,6 +4,7 @@ let socket;
 let isInitialized = false;
 let reconnectTimer = null;
 let authFailCallback = null;
+let messageQueue = []; // Add a queue for messages that fail to send
 
 const initSocket = (userId, token, onAuthFail = null) => {
   if (!userId || !token) {
@@ -44,6 +45,9 @@ const initSocket = (userId, token, onAuthFail = null) => {
       if (userId) {
         socket.emit('setup', userId);
         console.log('User setup emitted for ID:', userId);
+        
+        // Process any queued messages
+        processMessageQueue();
       }
     });
 
@@ -95,6 +99,44 @@ const initSocket = (userId, token, onAuthFail = null) => {
   return socket;
 };
 
+// Add method to check if socket is connected
+const isConnected = () => {
+  return socket && socket.connected;
+};
+
+// Add method to queue messages for later sending
+const queueMessage = (event, data) => {
+  messageQueue.push({ event, data });
+  console.log(`Message queued for later sending. Queue size: ${messageQueue.length}`);
+  
+  // Try to process the queue immediately if connected
+  if (isConnected()) {
+    processMessageQueue();
+  }
+};
+
+// Process queued messages
+const processMessageQueue = () => {
+  if (!isConnected() || messageQueue.length === 0) return;
+  
+  console.log(`Processing message queue. Items: ${messageQueue.length}`);
+  
+  // Process all queued messages
+  while (messageQueue.length > 0) {
+    const { event, data } = messageQueue.shift();
+    console.log(`Sending queued message: ${event}`);
+    socket.emit(event, data);
+  }
+};
+
+// Add method to force reconnection
+const reconnect = () => {
+  if (socket) {
+    console.log('Forcing socket reconnection...');
+    socket.connect();
+  }
+};
+
 const getSocket = () => socket;
 
 const disconnect = () => {
@@ -118,7 +160,10 @@ const disconnect = () => {
 const SocketService = {
   initSocket,
   getSocket,
-  disconnect
+  disconnect,
+  isConnected,  // Add new method
+  queueMessage, // Add new method
+  reconnect     // Add new method
 };
 
 export default SocketService;
