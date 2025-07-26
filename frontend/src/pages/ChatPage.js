@@ -1,6 +1,6 @@
 import React, { useContext, useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { FaSearch, FaEllipsisV, FaPaperPlane, FaSmile, FaUserPlus, FaTimes, FaSync } from 'react-icons/fa';
+import { FaSearch, FaEllipsisV, FaPaperPlane, FaSmile, FaUserPlus, FaTimes, FaSync, FaArrowLeft } from 'react-icons/fa';
 import { AuthContext } from '../context/AuthContext';
 import { ChatContext } from '../context/ChatContext';
 import UserListItem from '../components/Chat/UserListItem';
@@ -58,6 +58,9 @@ const ChatPage = () => {
   const [showChatSearch, setShowChatSearch] = useState(false);
   // eslint-disable-next-line no-unused-vars
   const [chatSearchTerm, setChatSearchTerm] = useState('');
+  // Add state for mobile view
+  const [isMobileView, setIsMobileView] = useState(window.innerWidth <= 768);
+  const [showSidebarMobile, setShowSidebarMobile] = useState(true);
   
   // Refs for the dropdown menus
   const sidebarMenuRef = useRef(null);
@@ -360,6 +363,11 @@ const ChatPage = () => {
     
     console.log("Selecting chat:", chat._id);
     setSelectedChat(chat);
+    
+    // Hide sidebar in mobile view when selecting a chat
+    if (isMobileView) {
+      setShowSidebarMobile(false);
+    }
   };
 
   // Define fetchAllUsers function
@@ -542,10 +550,27 @@ const ChatPage = () => {
     }
   };
   
+  // Add resize listener to detect mobile view
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobileView(window.innerWidth <= 768);
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Hide sidebar when chat is selected in mobile view
+  useEffect(() => {
+    if (isMobileView && selectedChat) {
+      setShowSidebarMobile(false);
+    }
+  }, [selectedChat, isMobileView]);
+  
   return (
     <div className="chat-container">
       {/* Sidebar */}
-      <div className="chat-sidebar">
+      <div className={`chat-sidebar ${isMobileView && !showSidebarMobile ? 'mobile-hidden' : ''}`}>
         <div className="sidebar-header">
           <div className="user-profile-header">
             <img 
@@ -720,10 +745,20 @@ const ChatPage = () => {
       </div>
       
       {/* Chat Area */}
-      <div className="chat-area">
+      <div className={`chat-area ${isMobileView && showSidebarMobile ? 'hidden-mobile' : ''}`}>
         {selectedChat ? (
           <>  {/* Chat Header */}
             <div className="chat-header">
+              {/* Add mobile menu toggle here */}
+              {isMobileView && (
+                <button 
+                  className="header-back-button"
+                  onClick={() => setShowSidebarMobile(true)}
+                  aria-label="Back to chat list"
+                >
+                  <FaArrowLeft />
+                </button>
+              )}
               <div className="chat-user-info">
                 <img 
                   src={selectedChat ? `${process.env.REACT_APP_API_URL}/uploads/${getChatData(selectedChat).image}` : '/default-avatar.png'} 
