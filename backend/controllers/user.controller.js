@@ -1,4 +1,6 @@
 const User = require('../models/user.model');
+const { uploadFile, deleteFile } = require('../services/s3.service');
+const mongoose = require('mongoose');
 
 // Get all users or search users
 exports.getUsers = async (req, res) => {
@@ -58,7 +60,31 @@ exports.updateProfile = async (req, res) => {
     
     // Update profile picture if uploaded
     if (req.file) {
-      user.profilePicture = req.file.filename;
+      try {
+        console.log('Uploading new profile picture for user:', user._id);
+        
+        // If user already has a profile picture that's not the default, delete it from S3
+        if (user.profilePicture && !user.profilePicture.includes('default-avatar')) {
+          try {
+            console.log('Attempting to delete old profile picture:', user.profilePicture);
+            await deleteFile(user.profilePicture);
+          } catch (deleteError) {
+            console.error('Error deleting old profile picture:', deleteError);
+            // Continue even if delete fails
+          }
+        }
+        
+        // Upload new profile picture to S3
+        const profilePictureUrl = await uploadFile(req.file, user._id);
+        console.log('Profile picture uploaded successfully:', profilePictureUrl);
+        user.profilePicture = profilePictureUrl;
+      } catch (uploadError) {
+        console.error('Error uploading profile picture:', uploadError);
+        return res.status(500).json({ 
+          message: 'Failed to upload profile picture', 
+          error: uploadError.message 
+        });
+      }
     }
     
     const updatedUser = await user.save();
@@ -72,6 +98,7 @@ exports.updateProfile = async (req, res) => {
       profilePicture: updatedUser.profilePicture
     });
   } catch (error) {
+    console.error('Update profile error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };

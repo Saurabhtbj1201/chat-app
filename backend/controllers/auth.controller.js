@@ -2,6 +2,8 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const User = require('../models/user.model');
 const sendEmail = require('../services/email.service');
+const { uploadFile } = require('../services/s3.service');
+const mongoose = require('mongoose');
 
 // Generate JWT token
 const generateToken = (id) => {
@@ -21,20 +23,33 @@ exports.register = async (req, res) => {
       return res.status(400).json({ message: 'User already exists' });
     }
     
-    // Create profile picture path if uploaded
-    let profilePicture = 'default-avatar.png';
+    // Create temporary user ID for the file name
+    const tempUserId = new mongoose.Types.ObjectId();
+    
+    // Default profile picture URL (from model schema default)
+    let profilePicture;
+    
+    // Upload profile picture if provided
     if (req.file) {
-      profilePicture = req.file.filename;
+      try {
+        console.log('Uploading profile picture for new user');
+        profilePicture = await uploadFile(req.file, tempUserId);
+        console.log('Uploaded to:', profilePicture);
+      } catch (uploadError) {
+        console.error('Error uploading profile picture during registration:', uploadError);
+        // Continue registration with default avatar
+      }
     }
     
     // Create new user
     const user = await User.create({
+      _id: tempUserId, // Use the same ID we used for the file
       firstName,
       lastName,
       email,
       mobile,
       password,
-      profilePicture
+      ...(profilePicture && { profilePicture }) // Only set if we have a URL
     });
     
     // Generate token
@@ -51,6 +66,7 @@ exports.register = async (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Registration error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };

@@ -197,6 +197,7 @@ export const ChatProvider = ({ children }) => {
       };
       
       // Initialize socket with user ID, token, and auth fail handler
+      // Make sure we pass the raw token without Bearer prefix
       const socket = SocketService.initSocket(user._id, token, handleAuthFail);
       setSocket(socket);
       

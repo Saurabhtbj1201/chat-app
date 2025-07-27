@@ -7,21 +7,6 @@ const jwt = require('jsonwebtoken');
 const activeUsers = new Map();
 
 exports.setupSocket = (io) => {
-  io.use(async (socket, next) => {
-    try {
-      if (socket.handshake.query && socket.handshake.query.token) {
-        const token = socket.handshake.query.token;
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        socket.userId = decoded.id;
-        next();
-      } else {
-        next(new Error('Authentication error'));
-      }
-    } catch (error) {
-      next(new Error('Authentication error'));
-    }
-  });
-
   io.on('connection', (socket) => {
     console.log('New user connected:', socket.userId);
     
@@ -117,8 +102,18 @@ exports.setupSocket = (io) => {
     });
     
     // Mark messages as read
-    socket.on('markMessagesRead', async (chatId) => {
+    socket.on('markMessagesRead', async (data) => {
       try {
+        // Extract chatId from data - handle both string and object formats
+        const chatId = typeof data === 'string' ? data : data.chatId;
+        
+        if (!chatId) {
+          console.error('Invalid chatId for markMessagesRead:', data);
+          return;
+        }
+
+        console.log(`Marking messages as read in chat ${chatId} for user ${socket.userId}`);
+        
         await Message.updateMany(
           { 
             chat: chatId,
@@ -144,17 +139,21 @@ exports.setupSocket = (io) => {
         // Remove from active users
         activeUsers.delete(socket.userId);
         
-        // Update user status
-        await User.findByIdAndUpdate(socket.userId, {
-          isOnline: false,
-          lastSeen: Date.now()
-        });
-        
-        // Broadcast user offline status
-        io.emit('userStatus', {
-          userId: socket.userId,
-          status: 'offline'
-        });
+        try {
+          // Update user status
+          await User.findByIdAndUpdate(socket.userId, {
+            isOnline: false,
+            lastSeen: Date.now()
+          });
+          
+          // Broadcast user offline status
+          io.emit('userStatus', {
+            userId: socket.userId,
+            status: 'offline'
+          });
+        } catch (error) {
+          console.error('Error updating user status on disconnect:', error);
+        }
       }
     });
   });

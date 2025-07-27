@@ -76,7 +76,7 @@ const ChatItem = ({ chat, isSelected, onClick, isOnline, onDeleteContact, onView
     >
       <img 
         className="chat-item-avatar" 
-        src={`${process.env.REACT_APP_API_URL}/uploads/${chatData.image}`} 
+        src={chatData.image} // Already S3 URL from backend
         alt={chatData.name} 
       />
       <div className="chat-item-details">

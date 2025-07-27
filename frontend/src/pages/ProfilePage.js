@@ -31,7 +31,8 @@ const ProfilePage = () => {
       });
       
       if (user.profilePicture) {
-        setProfilePicPreview(`${process.env.REACT_APP_API_URL}/uploads/${user.profilePicture}`);
+        // Use S3 URL directly instead of going through backend
+        setProfilePicPreview(user.profilePicture);
       }
     }
   }, [user]);

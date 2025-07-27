@@ -5,7 +5,7 @@ const UserListItem = ({ user, onClick }) => {
   return (
     <div className="user-list-item" onClick={onClick}>
       <img 
-        src={user.profilePicture ? `${process.env.REACT_APP_API_URL}/uploads/${user.profilePicture}` : '/default-avatar.png'} 
+        src={user.profilePicture || '/default-avatar.png'} 
         alt={`${user.firstName} ${user.lastName}`} 
       />
       <div className="user-list-item-info">

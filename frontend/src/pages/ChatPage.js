@@ -574,7 +574,7 @@ const ChatPage = () => {
         <div className="sidebar-header">
           <div className="user-profile-header">
             <img 
-              src={user?.profilePicture ? `${process.env.REACT_APP_API_URL}/uploads/${user.profilePicture}` : '/default-avatar.png'} 
+              src={user?.profilePicture || '/default-avatar.png'} 
               alt="Your Profile" 
               className="user-avatar"
             />
@@ -675,7 +675,7 @@ const ChatPage = () => {
                     <div key={user._id} className="user-contact-item">
                       <div className="user-info">
                         <img 
-                          src={user.profilePicture ? `${process.env.REACT_APP_API_URL}/uploads/${user.profilePicture}` : '/default-avatar.png'} 
+                          src={user.profilePicture || '/default-avatar.png'} 
                           alt={`${user.firstName} ${user.lastName}`} 
                         />
                         <div>
@@ -761,7 +761,7 @@ const ChatPage = () => {
               )}
               <div className="chat-user-info">
                 <img 
-                  src={selectedChat ? `${process.env.REACT_APP_API_URL}/uploads/${getChatData(selectedChat).image}` : '/default-avatar.png'} 
+                  src={selectedChat ? getChatData(selectedChat).image : '/default-avatar.png'} 
                   alt="Profile" 
                 />
                 <div>

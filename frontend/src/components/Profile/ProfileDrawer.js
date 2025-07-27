@@ -38,9 +38,7 @@ const ProfileDrawer = ({ chat, onClose, onDeleteContact }) => {
         {contactUser && (
           <div className="contact-profile-container">
             <img 
-              src={contactUser.profilePicture 
-                ? `${process.env.REACT_APP_API_URL}/uploads/${contactUser.profilePicture}` 
-                : '/default-avatar.png'} 
+              src={contactUser.profilePicture || '/default-avatar.png'} 
               alt={`${contactUser.firstName} ${contactUser.lastName}`} 
               className="contact-profile-picture"
             />

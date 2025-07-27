@@ -31,7 +31,14 @@ const UserSchema = new mongoose.Schema({
   },
   profilePicture: {
     type: String,
-    default: 'default-avatar.png'
+    default: function() {
+      const bucketName = process.env.AWS_S3_BUCKET_NAME;
+      const region = process.env.AWS_REGION || 'eu-north-1';
+      if (bucketName) {
+        return `https://${bucketName}.s3.${region}.amazonaws.com/profile-pictures/default-avatar.png`;
+      }
+      return 'default-avatar.png';
+    }
   },
   googleId: String,
   facebookId: String,

@@ -11,6 +11,7 @@ const userRoutes = require('./routes/user.routes');
 const chatRoutes = require('./routes/chat.routes');
 const messageRoutes = require('./routes/message.routes');
 const { setupSocket } = require('./services/socket.service');
+const jwt = require('jsonwebtoken');
 
 dotenv.config();
 
@@ -19,7 +20,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: process.env.CLIENT_URL || 'https://master.d1mxcnht7o30t1.amplifyapp.com',
+    origin: process.env.CLIENT_URL || 'http://localhost:3000',
     methods: ['GET', 'POST'],
     credentials: true
   }
@@ -41,6 +42,35 @@ app.use(passport.initialize());
 
 // Passport config
 require('./config/passport')(passport);
+
+// Setup socket authentication middleware
+io.use((socket, next) => {
+  try {
+    // Try to get token from auth object first, then from query params
+    const token = socket.handshake.auth.token || socket.handshake.query.token;
+    
+    if (!token) {
+      console.error('Socket auth failed: No token provided');
+      return next(new Error('Authentication error: No token provided'));
+    }
+    
+    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+      if (err) {
+        console.error('Socket auth failed: Invalid token', err.message);
+        return next(new Error('Authentication error: Invalid token'));
+      }
+      
+      // Store user information in socket object for later use
+      socket.userId = decoded.id; // Use consistent property name with socket.service.js
+      socket.user = decoded;
+      console.log(`Socket authenticated for user: ${decoded.id}`);
+      next();
+    });
+  } catch (error) {
+    console.error('Socket authentication error:', error);
+    next(new Error('Authentication error'));
+  }
+});
 
 // Setup socket.io
 setupSocket(io);
@@ -72,7 +102,15 @@ mongoose.connect(process.env.MONGODB_URI, {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`API available at https://master.d1mxcnht7o30t1.amplifyapp.com:${PORT}/api`);
+  console.log(`API available at http://localhost:${PORT}/api`);
+  console.log(`Environment: ${process.env.NODE_ENV}`);
+  
+  // Log S3 configuration status
+  if (process.env.AWS_S3_BUCKET_NAME) {
+    console.log(`S3 bucket configured: ${process.env.AWS_S3_BUCKET_NAME}`);
+  } else {
+    console.warn('S3 bucket not configured - using local file storage');
+  }
 });
 
 // Add error handler middleware

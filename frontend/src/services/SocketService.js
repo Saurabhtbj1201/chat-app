@@ -31,7 +31,7 @@ const initSocket = (userId, token, onAuthFail = null) => {
       reconnectionAttempts: 5,
       transports: ['websocket'],
       auth: {
-        token: `Bearer ${token}`
+        token: token  // Remove the 'Bearer ' prefix - JWT verification expects just the token
       },
       query: {
         userId

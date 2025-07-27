@@ -1,15 +1,8 @@
 const multer = require('multer');
 const path = require('path');
 
-// Set storage engine
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, path.join(__dirname, '../uploads/'));
-  },
-  filename: function (req, file, cb) {
-    cb(null, `user-${Date.now()}${path.extname(file.originalname)}`);
-  }
-});
+// Set up in-memory storage for multer (before uploading to S3)
+const storage = multer.memoryStorage();
 
 // Check file type
 const fileFilter = (req, file, cb) => {
