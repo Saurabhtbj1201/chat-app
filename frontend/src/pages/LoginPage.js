@@ -20,16 +20,14 @@ const LoginPage = () => {
     if (location.state?.from) {
       setError('Please log in to access this page');
     }
-    
+
     // Clear any auth context errors when component mounts
     if (authError) {
+      setError(authError.message || 'Authentication error');
       clearAuthError();
     }
-    
-    return () => {
-      // Clear local error state when component unmounts
-      setError('');
-    };
+
+    // Remove error cleanup from here
   }, [location, authError, clearAuthError]);
   
   const handleSubmit = async (e) => {
@@ -45,8 +43,9 @@ const LoginPage = () => {
     
     const result = await login(email, password);
     
+    // Show error for wrong email or password
     if (!result.success) {
-      setError(result.message);
+      setError(result.message || 'Invalid email or password');
     }
     
     setLoading(false);

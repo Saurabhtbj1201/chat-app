@@ -31,7 +31,7 @@ router.get('/google/callback',
 );
 
 // Facebook OAuth routes
-router.get('/facebook', passport.authenticate('facebook', { scope: ['email'] }));
+router.get('/facebook', passport.authenticate('facebook', { scope: ['email'] })); // <-- Only use if email is approved
 router.get('/facebook/callback',
   passport.authenticate('facebook', { session: false, failureRedirect: '/login' }),
   authController.socialLoginSuccess

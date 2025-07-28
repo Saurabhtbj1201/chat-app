@@ -76,6 +76,7 @@ const ChatPage = () => {
   const chatMenuRef = useRef(null);
   const sidebarButtonRef = useRef(null);
   const chatButtonRef = useRef(null);
+  const emojiPickerRef = useRef(null); // Add this ref
   
   // Track previous selected chat to detect changes
   const prevSelectedChatRef = useRef(null);
@@ -101,6 +102,13 @@ const ChatPage = () => {
           !chatButtonRef.current.contains(event.target)) {
         setShowChatMenu(false);
       }
+      
+      // Handle emoji picker - close it if clicking outside
+      if (showEmojiPicker && 
+          emojiPickerRef.current && 
+          !emojiPickerRef.current.contains(event.target)) {
+        setShowEmojiPicker(false);
+      }
     };
     
     document.addEventListener('mousedown', handleClickOutside);
@@ -108,7 +116,7 @@ const ChatPage = () => {
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [showHeaderMenu, showChatMenu]);
+  }, [showHeaderMenu, showChatMenu, showEmojiPicker]);
   
   // Define debugState function
   const debugState = () => {
@@ -426,6 +434,7 @@ const ChatPage = () => {
     // Hide sidebar in mobile view when selecting a chat
     if (isMobileView) {
       setShowSidebarMobile(false);
+      navigate('.', { state: { sidebar: false, chatId: chat._id } });
     }
   };
 
@@ -780,6 +789,41 @@ const ChatPage = () => {
     }
   }, [messagesLoading, messages.length, autoScroll, userScrolled, scrollToBottom]); // Add scrollToBottom dependency
 
+  // Track sidebar/chat state in history
+  useEffect(() => {
+    // On mount, set sidebar as default state
+    if (window.history.state === null) {
+      navigate('.', { replace: true, state: { sidebar: true, chatId: null } });
+    }
+  }, [navigate]);
+
+  // Listen for browser back/forward navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      const state = window.history.state;
+      if (state && state.sidebar) {
+        setShowSidebarMobile(true);
+        setSelectedChat(null);
+      } else if (state && state.chatId) {
+        setShowSidebarMobile(false);
+        // Find chat by ID and select it
+        const chat = chats.find(c => c._id === state.chatId);
+        if (chat) setSelectedChat(chat);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [chats, setSelectedChat]); // Add setSelectedChat to dependencies
+
+  // When going back to sidebar, push to history
+  const handleSidebarBack = () => {
+    setShowSidebarMobile(true);
+    setSelectedChat(null);
+    if (isMobileView) {
+      navigate('.', { state: { sidebar: true, chatId: null } });
+    }
+  };
+
   return (
     <div className="chat-container">
       {/* Sidebar */}
@@ -966,7 +1010,7 @@ const ChatPage = () => {
               {isMobileView && (
                 <button 
                   className="header-back-button"
-                  onClick={() => setShowSidebarMobile(true)}
+                  onClick={handleSidebarBack}
                   aria-label="Back to chat list"
                 >
                   <FaArrowLeft />
@@ -1128,7 +1172,7 @@ const ChatPage = () => {
                 <FaPaperPlane />
               </button>
               {showEmojiPicker && (
-                <div className="emoji-picker-container">
+                <div className="emoji-picker-container" ref={emojiPickerRef}>
                   <EmojiPicker 
                     onEmojiClick={handleEmojiClick}
                     height={300}
