@@ -193,3 +193,25 @@ exports.removeFromGroup = async (req, res) => {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
+
+// Remove or comment out this stub if not needed
+// exports.getChats = async (req, res) => {
+//   // Implement your logic to return user's chats
+// };
+
+// Add this at the bottom if missing
+exports.deleteChat = async (req, res) => {
+  try {
+    const chatId = req.params.id;
+    // You may want to check if the user is a participant before deleting
+    // Example: await Chat.deleteOne({ _id: chatId, participants: req.user._id });
+    const result = await require('../models/chat.model').deleteOne({ _id: chatId });
+    if (result.deletedCount === 1) {
+      res.json({ success: true, message: 'Chat deleted' });
+    } else {
+      res.status(404).json({ success: false, message: 'Chat not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};

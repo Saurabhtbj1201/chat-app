@@ -15,11 +15,14 @@ const setupSocket = (io) => {
       // Join user's personal room
       socket.join(userId);
       
-      // Broadcast that user is online
-      socket.broadcast.emit('user_online', userId);
+      // Broadcast that user is online to ALL clients INCLUDING sender
+      io.emit('user_online', userId);
+      console.log(`User ${userId} is now online. Broadcasting to all clients.`);
       
-      // Send all online users to the newly connected client
-      socket.emit('online_users', [...userSockets.keys()]);
+      // Send all online users to all clients for synchronization
+      const onlineUsersList = Array.from(userSockets.keys());
+      io.emit('online_users', onlineUsersList);
+      console.log(`Current online users (${onlineUsersList.length}):`, onlineUsersList);
       
       console.log(`User ${userId} connected with socket ${socket.id}`);
     });
@@ -74,12 +77,19 @@ const setupSocket = (io) => {
       console.log('Socket disconnected:', socket.id);
       
       // Find user by socket ID and remove from online users
+      let disconnectedUserId = null;
       for (const [userId, socketId] of userSockets.entries()) {
         if (socketId === socket.id) {
+          disconnectedUserId = userId;
           userSockets.delete(userId);
           
-          // Broadcast that user is offline
-          socket.broadcast.emit('user_offline', userId);
+          // Broadcast that user is offline to ALL clients
+          io.emit('user_offline', userId);
+          console.log(`User ${userId} is now offline. Broadcasting to all clients.`);
+          
+          // Update online users list for all clients
+          const onlineUsersList = Array.from(userSockets.keys());
+          io.emit('online_users', onlineUsersList);
           
           console.log(`User ${userId} disconnected`);
           break;

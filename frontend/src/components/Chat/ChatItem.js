@@ -1,14 +1,26 @@
 import React, { useContext, useState, useRef, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { AuthContext } from '../../context/AuthContext';
+import { ChatContext } from '../../context/ChatContext'; // Add this import
 import { FaEllipsisV, FaTrash, FaUserCircle } from 'react-icons/fa';
 import { formatDistanceToNow } from 'date-fns';
 
 const ChatItem = ({ chat, isSelected, onClick, isOnline, onDeleteContact, onViewProfile }) => {
   const { user } = useContext(AuthContext);
+  const { notifications } = useContext(ChatContext); 
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef(null);
   const menuButtonRef = useRef(null);
+  
+  // Ensure we're getting the correct unread count
+  const unreadCount = chat.unreadCount || notifications.filter(n => n.chat._id === chat._id).length;
+  
+  // Log unread count to debug
+  useEffect(() => {
+    if (unreadCount > 0) {
+      console.log(`Chat ${chat._id} has ${unreadCount} unread messages`);
+    }
+  }, [unreadCount, chat._id]);
   
   // Handle clicks outside the menu
   useEffect(() => {
@@ -53,6 +65,7 @@ const ChatItem = ({ chat, isSelected, onClick, isOnline, onDeleteContact, onView
   
   const handleDeleteClick = (e) => {
     e.stopPropagation(); // Prevent chat selection when clicking delete
+    console.log('Delete clicked for chat:', chat._id);
     onDeleteContact(chat._id);
     setShowMenu(false);
   };
@@ -71,12 +84,12 @@ const ChatItem = ({ chat, isSelected, onClick, isOnline, onDeleteContact, onView
   
   return (
     <div 
-      className={`chat-item ${isSelected ? 'selected' : ''}`}
+      className={`chat-item ${isSelected ? 'selected' : ''} ${chat.hasNewMessages ? 'has-new-messages' : ''}`}
       onClick={onClick}
     >
       <img 
         className="chat-item-avatar" 
-        src={chatData.image} // Already S3 URL from backend
+        src={chatData.image}
         alt={chatData.name} 
       />
       <div className="chat-item-details">
@@ -88,7 +101,7 @@ const ChatItem = ({ chat, isSelected, onClick, isOnline, onDeleteContact, onView
             </span>
           )}
         </div>
-        <div className="chat-item-message">
+        <div className={`chat-item-message ${chat.hasNewMessages ? 'unread-message' : ''}`}>
           {chat.latestMessage ? (
             chat.latestMessage.sender._id === user?._id ? 
               `You: ${chat.latestMessage.content}` : 
@@ -108,6 +121,13 @@ const ChatItem = ({ chat, isSelected, onClick, isOnline, onDeleteContact, onView
           )}
         </div>
       </div>
+      
+      {/* Ensure notification badge is visible with higher z-index */}
+      {unreadCount > 0 && (
+        <div className="notification-badge" style={{ zIndex: 50 }}>
+          {unreadCount}
+        </div>
+      )}
       
       {/* Add 3-dot menu button */}
       <button 

@@ -32,7 +32,7 @@ export const ChatProvider = ({ children }) => {
       'Content-Type': 'application/json',
       'Authorization': token ? `Bearer ${token}` : ''
     },
-    timeout: 10000 // 10 second timeout to prevent hanging requests
+    timeout: 20000 // Increase timeout to 20 seconds for chat list fetch
   }), [token]);
 
   // IMPORTANT: Define fetchMessages before using it in any other hooks or functions
@@ -204,14 +204,18 @@ export const ChatProvider = ({ children }) => {
       // Listen for users coming online
       socket.on('user_online', (userId) => {
         console.log('User came online:', userId);
-        setOnlineUsers(prev => new Set([...prev, userId]));
+        setOnlineUsers(prev => {
+          const newSet = new Set(prev);
+          newSet.add(userId);
+          return newSet;
+        });
       });
 
       // Listen for users going offline
       socket.on('user_offline', (userId) => {
         console.log('User went offline:', userId);
         setOnlineUsers(prev => {
-          const newSet = new Set([...prev]);
+          const newSet = new Set(prev);
           newSet.delete(userId);
           return newSet;
         });
@@ -219,8 +223,19 @@ export const ChatProvider = ({ children }) => {
 
       // Get initial online users
       socket.on('online_users', (users) => {
-        console.log('Received online users:', users);
-        setOnlineUsers(new Set(users));
+        console.log('Received online users from server:', users);
+        
+        // Always ensure current user is included in the list
+        let newUsers = [...users];
+        if (user?._id && !newUsers.includes(user._id)) {
+          newUsers.push(user._id);
+          console.log('Added current user to online users list');
+        }
+        
+        // Create a completely new Set with the latest users
+        const newOnlineUsers = new Set(newUsers);
+        setOnlineUsers(newOnlineUsers);
+        console.log('Updated online users set:', Array.from(newOnlineUsers));
       });
     }
 
@@ -237,10 +252,18 @@ export const ChatProvider = ({ children }) => {
     // Add socket connection status tracking
     const handleConnect = () => {
       console.log('Socket connected in ChatContext');
+      
+      // Always add current user to online users when socket connects
+      if (user?._id) {
+        setOnlineUsers(prev => {
+          const newSet = new Set(prev);
+          newSet.add(user._id);
+          return newSet;
+        });
+      }
+      
       // When reconnected, fetch fresh data
       if (selectedChat) {
-        // Don't call fetchMessages directly here as it can cause an update loop
-        // Instead, set a flag to indicate a refresh is needed
         console.log('Socket reconnected, messages will refresh on next user interaction');
       }
     };
@@ -288,41 +311,94 @@ export const ChatProvider = ({ children }) => {
     // Listen for new messages
     socket.on('message_received', (newMessage) => {
       console.log('Received new message:', newMessage);
+      console.log('Current selected chat:', selectedChat?._id);
+      console.log('Message chat ID:', newMessage.chat._id);
       
-      // If the chat is not selected OR the message is not from the selected chat
+      // If chat is not selected OR message is not from selected chat, add notification
       if (!selectedChat || selectedChat._id !== newMessage.chat._id) {
-        // Add notification
-        console.log('Adding to notifications');
+        console.log('Adding notification for message:', newMessage._id);
+        
+        // Use functional update to avoid stale state
         setNotifications(prev => {
-          // Avoid duplicates
-          if (prev.some(msg => msg._id === newMessage._id)) return prev;
+          // Check if this notification already exists
+          if (prev.some(n => n._id === newMessage._id)) {
+            console.log('Notification already exists, not adding duplicate');
+            return prev;
+          }
+          
+          console.log('Added new notification, total count:', prev.length + 1);
           return [...prev, newMessage];
         });
+        
+        // Also update chats list with latest message and trigger UI update
+        setChats(prev => {
+          const updatedChats = prev.map(c => {
+            if (c._id === newMessage.chat._id) {
+              // Mark chat as having new messages
+              return { 
+                ...c, 
+                latestMessage: newMessage,
+                hasNewMessages: true, // Add this flag to track unread messages
+                unreadCount: (c.unreadCount || 0) + 1 // Increment unread count
+              };
+            }
+            return c;
+          });
+          
+          // Find the updated chat
+          const updatedChat = updatedChats.find(c => c._id === newMessage.chat._id);
+          
+          // If the chat doesn't exist in our state yet, add it
+          if (!updatedChat) {
+            return [
+              {
+                ...newMessage.chat,
+                latestMessage: newMessage,
+                hasNewMessages: true,
+                unreadCount: 1
+              },
+              ...updatedChats
+            ];
+          }
+          
+          return updatedChats;
+        });
       } else {
-        // Update messages for current chat
-        console.log('Updating messages for current chat');
+        // For the selected chat, just update messages without adding notification
+        console.log('Adding message to current chat');
         setMessages(prev => {
           // Avoid duplicates
-          if (prev.some(msg => msg._id === newMessage._id)) return prev;
+          if (prev.some(msg => msg._id === newMessage._id)) {
+            console.log('Message already exists in chat, not adding duplicate');
+            return prev;
+          }
           return [...prev, newMessage];
         });
         
         // Mark as read
-        socket.emit('read_message', {
-          messageId: newMessage._id,
-          userId: user?._id,
-          chatId: selectedChat._id
+        if (socket.connected) {
+          console.log('Marking message as read:', newMessage._id);
+          socket.emit('markMessagesRead', {
+            chatId: selectedChat._id,
+            userId: user?._id
+          });
+        }
+        
+        // Update latest message in chats list without adding notifications
+        setChats(prev => {
+          return prev.map(c => {
+            if (c._id === newMessage.chat._id) {
+              return { 
+                ...c, 
+                latestMessage: newMessage,
+                hasNewMessages: false, // No new messages since we're in this chat
+                unreadCount: 0 // Reset unread count
+              };
+            }
+            return c;
+          });
         });
       }
-      // Update last message in chat list
-      setChats(prev => {
-        return prev.map(c => {
-          if (c._id === newMessage.chat._id) {
-            return { ...c, latestMessage: newMessage };
-          }
-          return c;
-        });
-      });
     });
 
     return () => {
@@ -333,7 +409,7 @@ export const ChatProvider = ({ children }) => {
       socket.off('messagesRead');
       socket.off('message_received');
     };
-  }, [socket, selectedChat, user]); // Remove fetchMessages from dependencies
+  }, [socket, selectedChat, user]); // Keep user in dependencies
 
   // Update the fetchChats function to handle authentication more gracefully
   const fetchChats = useCallback(async () => {
@@ -345,22 +421,22 @@ export const ChatProvider = ({ children }) => {
     setLoading(true);
     try {
       console.log('Fetching chats with token:', token ? 'Token exists' : 'No token');
+      // Increase timeout for chat list fetch to avoid aborting too soon
       const { data } = await axios.get(
         `${process.env.REACT_APP_API_URL}/api/chats`,
-        getApiConfig()
+        { ...getApiConfig(), timeout: 20000 } // 20 seconds timeout
       );
       setChats(data);
       return data;
     } catch (error) {
       console.error('Error fetching chats:', error);
-      
       if (error.response?.status === 401) {
         console.error('Authentication error - token may be invalid or expired');
-        // You might want to redirect to login or refresh the token here
       } else if (error.code === 'ERR_NETWORK') {
         console.log('Network error - backend may be down');
+      } else if (error.code === 'ECONNABORTED') {
+        console.error('Request timed out - try increasing timeout or check backend performance');
       }
-      
       return [];
     } finally {
       setLoading(false);
@@ -536,7 +612,20 @@ export const ChatProvider = ({ children }) => {
 
   // Clear notifications for a chat
   const clearNotifications = (chatId) => {
+    // Clear notifications
     setNotifications(prev => prev.filter(n => n.chat._id !== chatId));
+    
+    // Update chat to mark messages as read
+    setChats(prev => prev.map(chat => {
+      if (chat._id === chatId) {
+        return {
+          ...chat,
+          hasNewMessages: false,
+          unreadCount: 0
+        };
+      }
+      return chat;
+    }));
   };
 
   // Add a manual initial fetch function that's called once on mount
@@ -572,6 +661,7 @@ export const ChatProvider = ({ children }) => {
       messages,
       setMessages,
       onlineUsers,
+      setOnlineUsers, // Add this line to expose the setter function
       typingUsers,
       notifications,
       setNotifications,
@@ -590,9 +680,9 @@ export const ChatProvider = ({ children }) => {
       clearNotifications,
       checkSocketConnection,
       messagesLoading,
-      clearMessageCache, // Export the new function
+      clearMessageCache,
       debugMode,
-      setDebugMode, // Add this to let developers toggle debugging
+      setDebugMode,
     }}>
       {children}
     </ChatContext.Provider>

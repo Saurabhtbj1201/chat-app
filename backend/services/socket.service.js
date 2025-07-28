@@ -20,12 +20,34 @@ exports.setupSocket = (io) => {
         lastSeen: Date.now()
       }).exec();
       
-      // Broadcast user online status
-      io.emit('userStatus', {
-        userId: socket.userId,
-        status: 'online'
-      });
+      // Broadcast user online status to ALL clients (including the sender)
+      io.emit('user_online', socket.userId);
+      console.log(`User ${socket.userId} is now online, broadcasting to all clients`);
+      
+      // Send current list of all online users to ALL clients
+      const onlineUsersList = Array.from(activeUsers.keys());
+      io.emit('online_users', onlineUsersList);
+      console.log(`Current online users (${onlineUsersList.length}):`, onlineUsersList);
+      
+      // Also emit setup event to the newly connected client
+      socket.emit('setup', socket.userId);
     }
+    
+    // Handle explicit setup event if client sends it
+    socket.on('setup', (userId) => {
+      console.log(`Received setup event from user ${userId}`);
+      // If the userId matches the socket's authenticated userId, process it
+      if (socket.userId && socket.userId === userId) {
+        // Re-emit online status to ensure everyone gets updated
+        io.emit('user_online', userId);
+        
+        // Re-emit online users list
+        const onlineUsersList = Array.from(activeUsers.keys());
+        io.emit('online_users', onlineUsersList);
+      } else {
+        console.warn(`User ${socket.userId} tried to emit setup for ${userId}`);
+      }
+    });
     
     // Join chat room
     socket.on('joinChat', (chatId) => {
@@ -34,7 +56,7 @@ exports.setupSocket = (io) => {
     });
     
     // Send message
-    socket.on('sendMessage', async (messageData) => {
+    socket.on('new_message', async (messageData) => {
       try {
         const { chatId, content } = messageData;
         
@@ -58,14 +80,14 @@ exports.setupSocket = (io) => {
           latestMessage: newMessage._id
         });
         
-        // Send message to all users in the chat
-        io.to(chatId).emit('newMessage', populatedMessage);
+        // Send message to all users in the chat - IMPORTANT: Change event name to match frontend
+        io.to(chatId).emit('message_received', populatedMessage);
         
-        // Send notification to offline users
-        const chat = await Chat.findById(chatId);
+        // Send notification to offline users or users not in the chat
+        const chat = await Chat.findById(chatId).populate('participants');
         
         chat.participants.forEach((participant) => {
-          const participantId = participant.toString();
+          const participantId = participant._id.toString();
           
           // Skip sender
           if (participantId === socket.userId) return;
@@ -74,12 +96,13 @@ exports.setupSocket = (io) => {
           const userSocketId = activeUsers.get(participantId);
           
           if (userSocketId) {
-            io.to(userSocketId).emit('messageNotification', {
-              chatId,
-              message: populatedMessage
-            });
+            // Use consistent event name with frontend
+            io.to(userSocketId).emit('message_received', populatedMessage);
+            console.log(`Notification sent to user ${participantId} for new message in chat ${chatId}`);
           }
         });
+        
+        console.log(`Message broadcast complete for chat ${chatId}`);
         
       } catch (error) {
         console.error('Send message error:', error);
@@ -146,11 +169,14 @@ exports.setupSocket = (io) => {
             lastSeen: Date.now()
           });
           
-          // Broadcast user offline status
-          io.emit('userStatus', {
-            userId: socket.userId,
-            status: 'offline'
-          });
+          // Broadcast user offline status to ALL clients
+          io.emit('user_offline', socket.userId);
+          console.log(`User ${socket.userId} is now offline, broadcasting to all clients`);
+          
+          // Send updated list of online users to ALL clients
+          const onlineUsersList = Array.from(activeUsers.keys());
+          io.emit('online_users', onlineUsersList);
+          console.log(`Updated online users list (${onlineUsersList.length}):`, onlineUsersList);
         } catch (error) {
           console.error('Error updating user status on disconnect:', error);
         }

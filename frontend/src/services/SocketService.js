@@ -42,13 +42,12 @@ const initSocket = (userId, token, onAuthFail = null) => {
     socket.on('connect', () => {
       console.log('Socket connected. Socket ID:', socket.id);
       
-      if (userId) {
-        socket.emit('setup', userId);
-        console.log('User setup emitted for ID:', userId);
-        
-        // Process any queued messages
-        processMessageQueue();
-      }
+      // Always emit setup immediately on connection to register the user
+      socket.emit('setup', userId);
+      console.log('User setup emitted for ID:', userId);
+      
+      // Process any queued messages
+      processMessageQueue();
     });
 
     socket.on('connect_error', (error) => {

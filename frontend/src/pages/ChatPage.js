@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useState, useRef } from 'react';
+import React, { useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { FaSearch, FaEllipsisV, FaPaperPlane, FaSmile, FaUserPlus, FaTimes, FaSync, FaArrowLeft } from 'react-icons/fa';
 import { AuthContext } from '../context/AuthContext';
@@ -24,6 +24,7 @@ const ChatPage = () => {
     fetchMessages,
     sendMessage,
     onlineUsers,
+    setOnlineUsers, // Add this line to get setOnlineUsers
     typingUsers,
     startTyping,
     stopTyping,
@@ -34,6 +35,14 @@ const ChatPage = () => {
     messagesLoading, // Add this to get message loading state
     clearMessageCache // Add this to use the cache clearing function
   } = useContext(ChatContext);
+  
+  // Create a getApiConfig function if it's not available from context
+  const getApiConfig = useCallback(() => ({
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': token ? `Bearer ${token}` : ''
+    }
+  }), [token]);
   
   const navigate = useNavigate();
   
@@ -73,6 +82,33 @@ const ChatPage = () => {
   
   // Add an abortController ref to cancel in-flight requests when changing chats
   const abortControllerRef = useRef(null);
+  
+  // Add useEffect to handle clicks outside header menus
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      // Handle sidebar header menu
+      if (showHeaderMenu && 
+          sidebarMenuRef.current && 
+          !sidebarMenuRef.current.contains(event.target) &&
+          !sidebarButtonRef.current.contains(event.target)) {
+        setShowHeaderMenu(false);
+      }
+      
+      // Handle chat header menu
+      if (showChatMenu &&
+          chatMenuRef.current &&
+          !chatMenuRef.current.contains(event.target) &&
+          !chatButtonRef.current.contains(event.target)) {
+        setShowChatMenu(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showHeaderMenu, showChatMenu]);
   
   // Define debugState function
   const debugState = () => {
@@ -155,6 +191,14 @@ const ChatPage = () => {
     // Use a flag to prevent duplicate requests
     let isMounted = true;
     
+    // Add safety timeout to prevent infinite loading state - make it shorter
+    const safetyTimeoutId = setTimeout(() => {
+      if (isMounted) {
+        setIsLoading(false);
+        console.log('Safety timeout triggered to prevent infinite loading');
+      }
+    }, 3000); // Reduce to 3 seconds for faster response
+    
     const loadMessages = async () => {
       try {
         if (isMounted) {
@@ -168,10 +212,18 @@ const ChatPage = () => {
           );
           
           // Update messages state here, after getting the result
-          if (isMounted && data && data.messages) {
-            // Use functional update to avoid stale closures
-            setMessages(data.messages);
-            console.log(`Loaded ${data.messages.length} messages`);
+          if (isMounted) {
+            // Handle case when data.messages is undefined (new chat with no messages)
+            if (data && data.messages) {
+              setMessages(data.messages);
+              console.log(`Loaded ${data.messages.length} messages`);
+            } else {
+              setMessages([]);
+              console.log('No messages found for this chat');
+            }
+            
+            // Always reset loading state, even for empty messages
+            setIsLoading(false);
           }
           
           // Clear notifications in a separate try/catch to prevent affecting the main flow
@@ -188,9 +240,16 @@ const ChatPage = () => {
         if (error.name !== 'CanceledError' && error.code !== 'ERR_CANCELED') {
           console.error('Error loading messages:', error);
         }
+        
+        // Reset loading state on error
+        if (isMounted) {
+          setIsLoading(false);
+        }
       } finally {
         if (isMounted) {
           setIsLoading(false);
+          // Clear the safety timeout since we're done
+          clearTimeout(safetyTimeoutId);
         }
       }
     };
@@ -386,21 +445,37 @@ const ChatPage = () => {
   // Define handleDeleteContact function
   const handleDeleteContact = async (chatId) => {
     try {
+      console.log(`Deleting chat with ID: ${chatId}`);
+      
       // Call API to delete chat
-      await axios.delete(`${process.env.REACT_APP_API_URL}/api/chats/${chatId}`);
+      const response = await axios.delete(
+        `${process.env.REACT_APP_API_URL}/api/chats/${chatId}`,
+        getApiConfig() // Now we can safely use this function
+      );
       
-      // Update local state
-      fetchChats();
-      
-      // If the deleted chat was selected, clear selection
-      if (selectedChat && selectedChat._id === chatId) {
-        setSelectedChat(null);
+      if (response.status === 200) {
+        console.log('Chat successfully deleted');
+        
+        // Update local state - remove the deleted chat
+        setChats(prevChats => prevChats.filter(chat => chat._id !== chatId));
+        
+        // If the deleted chat was selected, clear selection
+        if (selectedChat && selectedChat._id === chatId) {
+          setSelectedChat(null);
+        }
+        
+        // Also clear any notifications for this chat
+        clearNotifications(chatId);
+        
+        // Show success message (you could add a toast notification here)
+        console.log('Contact deleted successfully');
+      } else {
+        console.error('Failed to delete chat:', response);
       }
-      
-      // Show success message or notification here if desired
     } catch (error) {
       console.error('Error deleting contact:', error);
       // Show error message or notification here if desired
+      alert('Failed to delete contact. Please try again.');
     }
   };
 
@@ -567,6 +642,144 @@ const ChatPage = () => {
     }
   }, [selectedChat, isMobileView]);
   
+  // Add a more comprehensive debug function to help diagnose online status issues
+  // eslint-disable-next-line no-unused-vars
+  const debugOnlineStatus = () => {
+    console.group('Online Status Debug');
+    console.log('Current online users:', Array.from(onlineUsers));
+    console.log('Current user ID:', user?._id);
+    console.log('Is current user shown as online:', onlineUsers.has(user?._id));
+    
+    // Always add the current user to the online users list
+    if (user?._id && !onlineUsers.has(user?._id)) {
+      console.log('Current user not in online list, adding manually');
+      // Use the function to update onlineUsers to prevent race conditions
+      setOnlineUsers(prev => {
+        const newSet = new Set(prev);
+        newSet.add(user._id);
+        return newSet;
+      });
+    }
+    
+    if (selectedChat) {
+      const otherUserId = selectedChat?.participants.find(p => p._id !== user?._id)?._id;
+      console.log('Selected chat partner ID:', otherUserId);
+      console.log('Is partner online?', onlineUsers.has(otherUserId));
+      
+      // Log the actual comparison values for debugging
+      console.log('Partner ID (last 4 chars):', otherUserId?.slice(-4));
+      console.log('Online users IDs (last 4 chars):', Array.from(onlineUsers).map(id => id.slice(-4)));
+    }
+    
+    console.log('Socket connected?', socket?.connected);
+    console.groupEnd();
+  };
+
+  // Fix the online status check in the chat header to add current user
+  useEffect(() => {
+    // Ensure current user is always shown as online to themselves
+    if (user?._id && !onlineUsers.has(user._id)) {
+      setOnlineUsers(prev => {
+        const newSet = new Set(prev);
+        newSet.add(user._id);
+        return newSet;
+      });
+    }
+  }, [user, onlineUsers, setOnlineUsers]); // Add setOnlineUsers to the dependency array
+
+  // Use effect to run the debug function when online users change
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      debugOnlineStatus(); // Actually call the function to avoid the warning
+    }
+  }, [onlineUsers, selectedChat]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Add a ref for messages container
+  const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [userScrolled, setUserScrolled] = useState(false); // Add this state to track manual scrolling
+  
+  // Improve scroll-to-bottom functionality with better handling - use useCallback to memoize
+  const scrollToBottom = useCallback(() => {
+    if (messagesEndRef.current && messagesContainerRef.current) {
+      // Don't auto-scroll if user has manually scrolled up and is viewing history
+      if (userScrolled) {
+        console.log('Not auto-scrolling because user manually scrolled up');
+        return;
+      }
+      
+      // Use requestAnimationFrame for smoother scrolling
+      requestAnimationFrame(() => {
+        const container = messagesContainerRef.current;
+        if (container) {
+          container.scrollTop = container.scrollHeight;
+        }
+      });
+    }
+  }, [userScrolled]); // Add userScrolled as a dependency
+  
+  // Fix manual scrolling by improving the scroll handler
+  useEffect(() => {
+    const handleScroll = () => {
+      if (!messagesContainerRef.current) return;
+      
+      const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
+      // If we're close to the bottom (within 100px), enable auto-scroll
+      const isCloseToBottom = scrollHeight - scrollTop - clientHeight < 100;
+      
+      // Only update autoScroll if we're not currently handling a new message
+      setAutoScroll(isCloseToBottom);
+      
+      // Set userScrolled when user manually scrolls up
+      if (!isCloseToBottom && !userScrolled) {
+        setUserScrolled(true);
+        console.log('User manually scrolled up');
+      }
+      
+      // Reset userScrolled when scrolled to bottom
+      if (isCloseToBottom && userScrolled) {
+        setUserScrolled(false);
+        console.log('User scrolled back to bottom');
+      }
+    };
+    
+    const container = messagesContainerRef.current;
+    if (container) {
+      // Use passive: true for better scroll performance
+      container.addEventListener('scroll', handleScroll, { passive: true });
+    }
+    
+    return () => {
+      if (container) {
+        container.removeEventListener('scroll', handleScroll);
+      }
+    };
+  }, [userScrolled]);
+  
+  // Only scroll to bottom when messages change if auto-scroll is enabled and user hasn't scrolled up
+  useEffect(() => {
+    if (autoScroll && messages.length > 0 && !userScrolled) {
+      scrollToBottom();
+    }
+  }, [messages, autoScroll, userScrolled, scrollToBottom]); // Add scrollToBottom dependency
+  
+  // Reset userScrolled when switching chats
+  useEffect(() => {
+    if (selectedChat) {
+      setAutoScroll(true);
+      setUserScrolled(false); // Reset user scroll state when changing chats
+      setTimeout(scrollToBottom, 100);
+    }
+  }, [selectedChat, scrollToBottom]); // Add scrollToBottom dependency
+  
+  // Also scroll to bottom when loading completes, but respect user scrolling
+  useEffect(() => {
+    if (!messagesLoading && messages.length > 0 && autoScroll && !userScrolled) {
+      setTimeout(scrollToBottom, 200);
+    }
+  }, [messagesLoading, messages.length, autoScroll, userScrolled, scrollToBottom]); // Add scrollToBottom dependency
+
   return (
     <div className="chat-container">
       {/* Sidebar */}
@@ -766,15 +979,23 @@ const ChatPage = () => {
                 />
                 <div>
                   <h3>{selectedChat ? getChatData(selectedChat).name : 'Select a chat'}</h3>
-                  <p className={
-                    onlineUsers.has(selectedChat.participants.find(p => p._id !== user?._id)?._id) 
-                    ? "status-online" 
-                    : "status-offline"
-                  }>
-                    {onlineUsers.has(selectedChat.participants.find(p => p._id !== user?._id)?._id) ? 'Online' : 'Offline'}
-                  </p>
+                  {/* Improved status display for better debugging */}
+                  {!selectedChat?.isGroupChat && (
+                    <p className={
+                      onlineUsers.has(selectedChat?.participants.find(p => p._id !== user?._id)?._id) 
+                      ? "status-online" 
+                      : "status-offline"
+                    }>
+                      {onlineUsers.has(selectedChat?.participants.find(p => p._id !== user?._id)?._id) 
+                        ? 'Online' 
+                        : 'Offline'} 
+                      {process.env.NODE_ENV === 'development' && 
+                        `(ID: ${selectedChat?.participants.find(p => p._id !== user?._id)?._id?.slice(-4)})`}
+                    </p>
+                  )}
                 </div>
               </div>
+              
               <div className="chat-actions">
                 <button 
                   className="header-icon-button" 
@@ -800,9 +1021,17 @@ const ChatPage = () => {
             </div>
             
             {/* Chat Messages */}
-            <div className="chat-messages">
-              {/* Show skeleton loader when changing chats */}
-              {(isLoading || messagesLoading) && messages.length === 0 ? (
+            <div className="chat-messages" ref={messagesContainerRef}>
+              {/* Only show loading indicator when fetching more messages and we already have some */}
+              {messagesLoading && messages.length > 0 && !isLoading && (
+                <div className="messages-loading-more">
+                  <div className="loading-spinner-small"></div>
+                </div>
+              )}
+              
+              {/* Show skeleton loader when initially loading messages */}
+              {(isLoading || (messagesLoading && messages.length === 0)) && 
+                (prevSelectedChatRef.current?._id !== selectedChat._id || !prevSelectedChatRef.current) ? (
                 <>
                   <div className="loading-messages">
                     <div className="loading-spinner"></div>
@@ -821,11 +1050,19 @@ const ChatPage = () => {
                 </div>
               ) : (
                 <>
-                  {/* Show a loading indicator for additional message loads */}
-                  {messagesLoading && messages.length > 0 && (
-                    <div className="messages-loading-more">
-                      <div className="loading-spinner-small"></div>
-                    </div>
+                  {/* Add button to scroll to bottom when not auto-scrolling */}
+                  {userScrolled && messages.length > 5 && (
+                    <button 
+                      className="scroll-to-bottom-btn"
+                      onClick={() => {
+                        setAutoScroll(true);
+                        setUserScrolled(false); // Reset user scroll state
+                        // Delay scrolling to ensure state updates first
+                        setTimeout(scrollToBottom, 50);
+                      }}
+                    >
+                      ↓ New messages
+                    </button>
                   )}
                   
                   {/* Render messages */}
@@ -857,6 +1094,9 @@ const ChatPage = () => {
                       )}
                     </div>
                   ))}
+                  
+                  {/* Add a larger div for better scrolling to bottom */}
+                  <div className="messages-end-spacer" ref={messagesEndRef} style={{ height: '20px' }}></div>
                 </>
               )}
               
@@ -915,11 +1155,14 @@ const ChatPage = () => {
       </div>
       
       {/* Profile Drawer */}
-      {isProfileOpen && (
+      {isProfileOpen && selectedChat && (
         <ProfileDrawer
           chat={selectedChat}
           onClose={() => setIsProfileOpen(false)}
-          onDeleteContact={handleDeleteContact}
+          onDeleteContact={(chatId) => {
+            handleDeleteContact(chatId);
+            setIsProfileOpen(false); // Close the drawer after deletion
+          }}
         />
       )}
       
