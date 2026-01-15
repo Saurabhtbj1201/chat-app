@@ -21,7 +21,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: process.env.CLIENT_URL || 'https://master.d1mxcnht7o30t1.amplifyapp.com/',
+    origin: process.env.CLIENT_URL || 'http://localhost:3000',
     methods: ['GET', 'POST'],
     credentials: true
   }
@@ -104,7 +104,7 @@ mongoose.connect(process.env.MONGODB_URI, {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`API available at https://master.d1mxcnht7o30t1.amplifyapp.com:${PORT}/api`);
+  console.log(`API available at http://localhost:${PORT}/api`);
   console.log(`Environment: ${process.env.NODE_ENV}`);
   
   // Log S3 configuration status
